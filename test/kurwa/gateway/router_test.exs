@@ -84,6 +84,58 @@ defmodule Kurwa.Gateway.RouterTest do
     assert %{status: 413} = request(:post, "/batch", %{op: "add", keys: too_many})
   end
 
+  test "named sets are separate namespaces over the same API" do
+    key = unique_key("set")
+
+    assert %{status: 200, body: %{"set" => "alpha"}} = request(:put, "/sets/alpha/k/#{key}")
+    assert %{status: 200, body: %{"member" => true}} = request(:get, "/sets/alpha/k/#{key}")
+
+    # same key, different set, and the default set - all independent
+    assert %{status: 404} = request(:get, "/sets/beta/k/#{key}")
+    assert %{status: 404} = request(:get, "/k/#{key}")
+
+    assert %{status: 200} = request(:delete, "/sets/alpha/k/#{key}")
+    assert %{status: 404} = request(:get, "/sets/alpha/k/#{key}")
+  end
+
+  test "a set name the store cannot represent is a client error" do
+    assert %{status: 400, body: %{"error" => error}} = request(:get, "/sets/has%20space/k/x")
+    assert error =~ "invalid set name"
+  end
+
+  test "union answers yes when any listed set has the key" do
+    key = unique_key("union-http")
+
+    assert %{status: 200} = request(:put, "/sets/greylist/k/#{key}")
+
+    assert %{status: 200, body: %{"member" => true, "sets" => ["blacklist", "greylist"]}} =
+             request(:get, "/union/k/#{key}?sets=blacklist,greylist")
+
+    assert %{status: 404, body: %{"member" => false}} =
+             request(:get, "/union/k/#{unique_key("nobody")}?sets=blacklist,greylist")
+  end
+
+  test "intersection answers yes only when every listed set has the key" do
+    key = unique_key("inter-http")
+
+    assert %{status: 200} = request(:put, "/sets/alpha/k/#{key}")
+
+    assert %{status: 404, body: %{"member" => false}} =
+             request(:get, "/intersection/k/#{key}?sets=alpha,beta")
+
+    assert %{status: 200} = request(:put, "/sets/beta/k/#{key}")
+
+    assert %{status: 200, body: %{"member" => true}} =
+             request(:get, "/intersection/k/#{key}?sets=alpha,beta")
+  end
+
+  test "a union needs at least one set to read from" do
+    assert %{status: 400, body: %{"error" => error}} = request(:get, "/union/k/x")
+    assert error =~ "sets="
+
+    assert %{status: 400} = request(:get, "/union/k/x?sets=has%20space")
+  end
+
   test "count reports the cluster estimate and who answered" do
     assert %{status: 200, body: body} = request(:get, "/count")
 

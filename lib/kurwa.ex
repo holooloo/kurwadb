@@ -11,14 +11,16 @@ defmodule Kurwa do
   key. That constraint is what lets the whole store be an `:ets` set behind a
   hash ring, with merges that need no coordination.
 
-  Every function here coordinates a quorum across the ring
-  (`Kurwa.Coordinator`). For the deliberately node-local variants, see
-  `Kurwa.Store`.
+  These functions work on the default, unnamed set. For named sets and for set
+  algebra over them, see `Kurwa.Namespace`. Every function here coordinates a
+  quorum across the ring (`Kurwa.Coordinator`); for the deliberately node-local
+  variants, see `Kurwa.Store`.
   """
 
   alias Kurwa.Cluster
   alias Kurwa.Config
   alias Kurwa.Coordinator
+  alias Kurwa.Key
   alias Kurwa.Record
   alias Kurwa.Ring
 
@@ -31,19 +33,19 @@ defmodule Kurwa do
   Options: `:n`, `:w`, `:timeout` override the configured defaults for this call.
   """
   @spec add(key(), opts()) :: :ok | {:error, term()}
-  defdelegate add(key, opts \\ []), to: Coordinator
+  def add(key, opts \\ []) when is_binary(key), do: Coordinator.add(Key.encode(key), opts)
 
   @doc "Adds `key`, raising `Kurwa.Error` if the quorum is not met."
   @spec add!(key(), opts()) :: :ok
-  def add!(key, opts \\ []), do: unwrap(Coordinator.add(key, opts))
+  def add!(key, opts \\ []), do: unwrap(add(key, opts))
 
   @doc "Removes `key` from the set. Idempotent."
   @spec delete(key(), opts()) :: :ok | {:error, term()}
-  defdelegate delete(key, opts \\ []), to: Coordinator
+  def delete(key, opts \\ []) when is_binary(key), do: Coordinator.delete(Key.encode(key), opts)
 
   @doc "Removes `key`, raising `Kurwa.Error` if the quorum is not met."
   @spec delete!(key(), opts()) :: :ok
-  def delete!(key, opts \\ []), do: unwrap(Coordinator.delete(key, opts))
+  def delete!(key, opts \\ []), do: unwrap(delete(key, opts))
 
   @doc """
   Is `key` in the set?
@@ -53,11 +55,11 @@ defmodule Kurwa do
   unreachable is worse than one that fails.
   """
   @spec member?(key(), opts()) :: boolean()
-  def member?(key, opts \\ []), do: unwrap(Coordinator.member?(key, opts))
+  def member?(key, opts \\ []), do: unwrap(fetch(key, opts))
 
   @doc "Like `member?/2`, but returns the error instead of raising."
   @spec fetch(key(), opts()) :: {:ok, boolean()} | {:error, term()}
-  defdelegate fetch(key, opts \\ []), to: Coordinator, as: :member?
+  def fetch(key, opts \\ []) when is_binary(key), do: Coordinator.member?(Key.encode(key), opts)
 
   @doc "Approximate number of live keys in the cluster. See `Kurwa.Coordinator.count/1`."
   @spec count(opts()) :: {:ok, map()} | {:error, term()}

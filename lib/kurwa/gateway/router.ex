@@ -2,13 +2,20 @@ defmodule Kurwa.Gateway.Router do
   @moduledoc """
   HTTP surface of kurwadb.
 
-      PUT    /k/:key        add the key            -> 200
-      GET    /k/:key        membership check       -> 200 member / 404 absent
-      DELETE /k/:key        remove the key         -> 200
-      POST   /batch         {"op":"add"|"member"|"delete","keys":[...]}
-      GET    /count         approximate live keys
-      GET    /info          ring, quorum settings, local stats
-      GET    /health        liveness (never authenticated)
+      PUT    /k/:key                add the key            -> 200
+      GET    /k/:key                membership check       -> 200 member / 404 absent
+      DELETE /k/:key                remove the key         -> 200
+      POST   /batch                 {"op":"add"|"member"|"delete","keys":[...]}
+
+      PUT    /sets/:set/k/:key      same three, in a named set
+      GET    /sets/:set/k/:key
+      DELETE /sets/:set/k/:key
+      GET    /union/k/:key?sets=a,b         member of ANY of these sets
+      GET    /intersection/k/:key?sets=a,b  member of ALL of these sets
+
+      GET    /count                 approximate live keys
+      GET    /info                  ring, quorum settings, local stats
+      GET    /health                liveness (never authenticated)
 
   Keys are URL path segments, so a key containing `/` must be percent-encoded.
   For keys that are not valid UTF-8, send them base64url-encoded and add
@@ -22,6 +29,7 @@ defmodule Kurwa.Gateway.Router do
   use Plug.Router
 
   alias Kurwa.Config
+  alias Kurwa.Namespace
 
   @max_batch 1_000
 
@@ -41,19 +49,15 @@ defmodule Kurwa.Gateway.Router do
     with {:ok, decoded} <- decode_key(conn, key) do
       respond(conn, Kurwa.add(decoded), %{ok: true, key: key})
     else
-      {:error, :bad_key} -> json(conn, 400, %{error: "key is not valid base64url"})
+      error -> key_error(conn, error)
     end
   end
 
   get "/k/:key" do
     with {:ok, decoded} <- decode_key(conn, key) do
-      case Kurwa.fetch(decoded) do
-        {:ok, true} -> json(conn, 200, %{key: key, member: true})
-        {:ok, false} -> json(conn, 404, %{key: key, member: false})
-        {:error, reason} -> json(conn, 503, %{error: reason_json(reason)})
-      end
+      membership(conn, Kurwa.fetch(decoded), %{key: key})
     else
-      {:error, :bad_key} -> json(conn, 400, %{error: "key is not valid base64url"})
+      error -> key_error(conn, error)
     end
   end
 
@@ -61,7 +65,52 @@ defmodule Kurwa.Gateway.Router do
     with {:ok, decoded} <- decode_key(conn, key) do
       respond(conn, Kurwa.delete(decoded), %{ok: true, key: key})
     else
-      {:error, :bad_key} -> json(conn, 400, %{error: "key is not valid base64url"})
+      error -> key_error(conn, error)
+    end
+  end
+
+  put "/sets/:set/k/:key" do
+    with {:ok, set} <- namespace(set),
+         {:ok, decoded} <- decode_key(conn, key) do
+      respond(conn, Namespace.add(set, decoded), %{ok: true, set: set, key: key})
+    else
+      error -> key_error(conn, error)
+    end
+  end
+
+  get "/sets/:set/k/:key" do
+    with {:ok, set} <- namespace(set),
+         {:ok, decoded} <- decode_key(conn, key) do
+      membership(conn, Namespace.member?(set, decoded), %{set: set, key: key})
+    else
+      error -> key_error(conn, error)
+    end
+  end
+
+  delete "/sets/:set/k/:key" do
+    with {:ok, set} <- namespace(set),
+         {:ok, decoded} <- decode_key(conn, key) do
+      respond(conn, Namespace.delete(set, decoded), %{ok: true, set: set, key: key})
+    else
+      error -> key_error(conn, error)
+    end
+  end
+
+  get "/union/k/:key" do
+    with {:ok, sets} <- sets_param(conn),
+         {:ok, decoded} <- decode_key(conn, key) do
+      membership(conn, Namespace.member_any?(sets, decoded), %{sets: sets, key: key})
+    else
+      error -> key_error(conn, error)
+    end
+  end
+
+  get "/intersection/k/:key" do
+    with {:ok, sets} <- sets_param(conn),
+         {:ok, decoded} <- decode_key(conn, key) do
+      membership(conn, Namespace.member_all?(sets, decoded), %{sets: sets, key: key})
+    else
+      error -> key_error(conn, error)
     end
   end
 
@@ -187,6 +236,42 @@ defmodule Kurwa.Gateway.Router do
     end
   end
 
+  defp namespace(name) do
+    if Namespace.valid_name?(name), do: {:ok, name}, else: {:error, {:bad_set, name}}
+  end
+
+  defp sets_param(conn) do
+    conn = fetch_query_params(conn)
+
+    case String.split(conn.query_params["sets"] || "", ",", trim: true) do
+      [] ->
+        {:error, :no_sets}
+
+      names ->
+        case Enum.reject(names, &Namespace.valid_name?/1) do
+          [] -> {:ok, names}
+          [bad | _] -> {:error, {:bad_set, bad}}
+        end
+    end
+  end
+
+  # 200 when the key is a member, 404 when it is not, 503 when we could not find
+  # out - never 200-with-false, which a client would read as a definite answer.
+  defp membership(conn, {:ok, true}, body), do: json(conn, 200, Map.put(body, :member, true))
+  defp membership(conn, {:ok, false}, body), do: json(conn, 404, Map.put(body, :member, false))
+
+  defp membership(conn, {:error, reason}, _body),
+    do: json(conn, 503, %{error: reason_json(reason)})
+
+  defp key_error(conn, {:error, :bad_key}),
+    do: json(conn, 400, %{error: "key is not valid base64url"})
+
+  defp key_error(conn, {:error, {:bad_set, name}}),
+    do: json(conn, 400, %{error: "invalid set name: #{inspect(name)}"})
+
+  defp key_error(conn, {:error, :no_sets}),
+    do: json(conn, 400, %{error: "pass ?sets=a,b with at least one set name"})
+
   defp respond(conn, :ok, body), do: json(conn, 200, body)
   defp respond(conn, {:error, reason}, _body), do: json(conn, 503, %{error: reason_json(reason)})
 
@@ -210,6 +295,11 @@ defmodule Kurwa.Gateway.Router do
   end
 
   defp reason_json(:unavailable), do: %{kind: "unavailable"}
+
+  defp reason_json({:incomplete_union, errors}) do
+    %{kind: "incomplete_union", sets: stringify_reasons(errors)}
+  end
+
   defp reason_json(other), do: %{kind: "error", detail: inspect(other)}
 
   defp stringify(map), do: Map.new(map, fn {node, value} -> {to_string(node), value} end)
