@@ -16,7 +16,7 @@ defmodule Kurwa.Application do
       [
         Kurwa.Store.Supervisor,
         Kurwa.Cluster
-      ] ++ gateway()
+      ] ++ gateway() ++ ninep()
 
     Logger.info(
       "kurwadb: starting on #{node()} (n=#{Config.n()} r=#{Config.r()} w=#{Config.w()} " <>
@@ -30,6 +30,23 @@ defmodule Kurwa.Application do
     if Config.get(:start_gateway) do
       port = Config.get(:http_port)
       [{Bandit, plug: Kurwa.Gateway.Router, scheme: :http, port: port}]
+    else
+      []
+    end
+  end
+
+  # Off by default: the registered 9P port needs privileges to bind, and not
+  # every deployment wants a second frontend.
+  defp ninep do
+    if Config.get(:start_9p) do
+      port = Config.get(:ninep_port)
+
+      [
+        Supervisor.child_spec(
+          {ThousandIsland, port: port, handler_module: Kurwa.NineP.Server},
+          id: :kurwa_9p
+        )
+      ]
     else
       []
     end

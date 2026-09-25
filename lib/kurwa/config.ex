@@ -23,6 +23,8 @@ defmodule Kurwa.Config do
     strict_quorum: false,
     start_gateway: true,
     http_port: 4040,
+    start_9p: false,
+    ninep_port: 564,
     auth_token: nil
   }
 

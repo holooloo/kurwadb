@@ -24,10 +24,14 @@ config :kurwadb,
   seeds: [],
   seed_retry_interval: 5_000,
 
-  # gateway
+  # gateways
   start_gateway: true,
   http_port: 4040,
-  auth_token: nil
+  auth_token: nil,
+
+  # 9P frontend: off by default, and port 564 needs privileges to bind
+  start_9p: false,
+  ninep_port: 564
 
 config :logger, level: :info
 

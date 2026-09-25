@@ -25,6 +25,7 @@ defmodule Kurwadb.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.5"},
+      {:thousand_island, "~> 1.5"},
       {:plug, "~> 1.16"},
       {:jason, "~> 1.4"}
     ]
