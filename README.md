@@ -1,3 +1,155 @@
 # kurwadb
 
-## Kurwa-proxy, Kurwa-gateway, Kurwa-auth, Kurwa-Store
+A distributed set. Keys, and nothing else.
+
+```elixir
+Kurwa.add("order:1029")      #=> :ok
+Kurwa.member?("order:1029")  #=> true
+Kurwa.delete("order:1029")   #=> :ok
+Kurwa.member?("order:1029")  #=> false
+```
+
+There are no values, no scans, no queries, no indexes. Every operation names
+exactly one key. That is not a missing feature list - it is the constraint the
+whole design is bought with:
+
+* **No values** means conflict resolution is a total order on two integers. Two
+  replicas that saw the same writes agree, in any order, without talking to each
+  other. No vector clocks, no siblings, no merge callbacks.
+* **No scans** means a key's location is the only thing that decides which node
+  answers, so any node can coordinate any request and there is no leader.
+* **A key is its own payload**, so a membership check is one `:ets.lookup` on the
+  replica - the read path never touches a process mailbox.
+
+What that buys you is the set of jobs people actually keep a key-only store for:
+deduplication, idempotency keys, rate-limit buckets, blocklists, "have I seen
+this event", seen-URL frontiers.
+
+## Status
+
+Working and covered by 167 tests: the store, the ring, quorum reads and writes,
+read repair, hinted handoff, named sets, the HTTP API and the 9P server
+(end-to-end over a real socket).
+
+Verified by hand on three nodes, which is how the handoff design was found -
+see [ARCHITECTURE.md](ARCHITECTURE.md#failure-behaviour-as-measured).
+An automated multi-node test is still a gap.
+
+## Quick start
+
+```sh
+mix deps.get
+mix test
+iex -S mix                       # HTTP on http://localhost:4040
+```
+
+Three nodes on one machine:
+
+```sh
+scripts/cluster.sh               # kurwa1..3, HTTP on 4040, 4041, 4042
+```
+
+```sh
+curl -X PUT localhost:4040/k/order:1029      # add, on one node
+curl -i   localhost:4041/k/order:1029        # 200, read from another
+curl -X DELETE localhost:4042/k/order:1029   # delete, from a third
+curl      localhost:4040/count
+curl      localhost:4040/info
+```
+
+## HTTP API
+
+| | |
+|---|---|
+| `PUT /k/:key` | add the key |
+| `GET /k/:key` | `200` if a member, `404` if not, `503` if we could not find out |
+| `DELETE /k/:key` | remove the key |
+| `POST /batch` | `{"op":"add"\|"member"\|"delete","keys":[...]}`, up to 1000 keys |
+| `PUT GET DELETE /sets/:set/k/:key` | the same three, in a named set |
+| `GET /union/k/:key?sets=a,b` | member of **any** of these sets |
+| `GET /intersection/k/:key?sets=a,b` | member of **all** of these sets |
+| `GET /count` | approximate live keys, and who reported |
+| `GET /info` | ring, reachability, quorum settings, cache and handoff stats |
+| `GET /health` | liveness, never authenticated |
+
+A failed quorum is `503`, never `200` - an unreachable replica must not read as
+"the key is not in the set".
+
+Keys are URL path segments, so percent-encode `/`. For keys that are not valid
+UTF-8, send them base64url-encoded with `?b64=1`; responses echo the key exactly
+as it arrived, because a binary key has no JSON form.
+
+Set `KURWA_AUTH_TOKEN` to require `Authorization: Bearer <token>` on everything
+except `/health`.
+
+## 9P
+
+Mount the store as a filesystem. `stat` is `member?`, `create` is `add`,
+`remove` is `delete` - the same data model, not a metaphor.
+
+```
+/ctl                write "compact" | "gc" | "sync" | "join node@host" | "forget node@host"
+/stats              local keys, lamport, members, pending handoff
+/ring               members with up/down, vnodes, n/r/w
+/keys/<key>         the default set
+/b64/<base64url>    the default set, for keys that are not valid file names
+/sets/<set>/<key>   a named set
+```
+
+```sh
+KURWA_9P=1 KURWA_9P_PORT=1564 iex -S mix
+# then, with plan9port or v9fs:
+9p -a localhost:1564 ls /
+9p -a localhost:1564 read ring
+```
+
+Off by default; port 564 is the registered one but needs privileges to bind.
+`/keys`, `/b64` and `/sets/<set>` refuse to be listed - kurwadb has no scans,
+and an empty listing would be a lie.
+
+## Configuration
+
+Every setting has a default, so the app boots with no config at all. Environment
+variables are read at boot (`config/runtime.exs`).
+
+| setting | env | default | |
+|---|---|---|---|
+| `n` `r` `w` | `KURWA_N` `KURWA_R` `KURWA_W` | 3, 2, 2 | replicas, read quorum, write quorum |
+| `strict_quorum` | `KURWA_STRICT_QUORUM` | `false` | fail instead of lowering the quorum to the replicas that exist |
+| `vnodes` | `KURWA_VNODES` | 128 | ring points per node |
+| `shards` | `KURWA_SHARDS` | 8 | local ETS tables, for write concurrency |
+| `data_dir` | `KURWA_DATA_DIR` | `data` | WAL and snapshots, scoped per node |
+| `seeds` | `KURWA_SEEDS` | `[]` | comma-separated nodes to connect to |
+| `tombstone_ttl` | `KURWA_TOMBSTONE_TTL_MS` | 24h | must exceed your longest outage |
+| `cache` | | `false` | extractor cache; trades linearizable reads for bounded staleness |
+| `http_port` | `KURWA_HTTP_PORT` | 4040 | |
+| `start_9p` `ninep_port` | `KURWA_9P` `KURWA_9P_PORT` | `false`, 564 | |
+| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for the HTTP API |
+
+`r + w > n` is what gives you read-your-writes on a key. Weaker settings are
+allowed and logged as a warning, because it is a real durability decision.
+
+## Layout
+
+```
+Kurwa                 the public API, default set
+Kurwa.Namespace       named sets, union and intersection on the read path
+Kurwa.Extractor       cache + single-flight (pass-through unless enabled)
+Kurwa.Coordinator     leaderless quorum reads and writes, read repair
+Kurwa.Placement       which replicas own a key, and which can answer
+Kurwa.Handoff         writes a replica missed, replayed when it returns
+Kurwa.Cluster         membership, reachability, the ring
+Kurwa.Ring            consistent hashing
+Kurwa.Quorum          first-K-of-N fan-out
+Kurwa.Store           local shards
+Kurwa.Store.Engine    storage behaviour; ETS + WAL is one implementation
+Kurwa.Gateway         HTTP
+Kurwa.NineP           9P2000
+```
+
+[ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure
+behaviour, and what is deliberately not built yet.
+
+## License
+
+MIT

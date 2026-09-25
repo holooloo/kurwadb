@@ -23,6 +23,9 @@ if config_env() != :test do
     vnodes: int.("KURWA_VNODES", 128),
     data_dir: get.("KURWA_DATA_DIR", "data"),
     http_port: int.("KURWA_HTTP_PORT", 4040),
+    start_9p: System.get_env("KURWA_9P") in ~w(1 true),
+    ninep_port: int.("KURWA_9P_PORT", 564),
+    cache: System.get_env("KURWA_CACHE") in ~w(1 true),
     auth_token: System.get_env("KURWA_AUTH_TOKEN"),
     tombstone_ttl: int.("KURWA_TOMBSTONE_TTL_MS", 86_400_000),
     seeds: seeds
