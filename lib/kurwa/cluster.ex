@@ -8,6 +8,15 @@ defmodule Kurwa.Cluster do
   which keeps unrelated BEAM nodes out of the ring), and republishes the ring on
   every change.
 
+  Two sets, not one, and the difference is load-bearing:
+
+  * `members` - every node we have ever verified. The ring is built from these,
+    so a key's replicas do not move because a node blinked.
+  * `up` - the members we can reach right now. Writes go to these; the rest
+    become hints for `Kurwa.Handoff`.
+
+  A node leaves `members` only when an operator says so (`forget/1`).
+
   The ring itself lives in `:persistent_term` so that the request path reads it
   with no copy and no process hop. Membership changes are rare, which is exactly
   the access pattern `:persistent_term` is for.
@@ -20,15 +29,36 @@ defmodule Kurwa.Cluster do
 
   require Logger
 
-  @pt_key {__MODULE__, :ring}
+  @pt_ring {__MODULE__, :ring}
+  @pt_up {__MODULE__, :up}
 
-  @doc "Current ring. Safe to call from anywhere, including before the process starts."
+  @doc "Current ring, built from every known member. Safe to call before the process starts."
   @spec ring() :: Ring.t()
-  def ring, do: :persistent_term.get(@pt_key, empty_ring())
+  def ring, do: :persistent_term.get(@pt_ring, empty_ring())
 
-  @doc "Verified kurwadb nodes, this one included."
+  @doc "Every kurwadb node we have verified, reachable or not."
   @spec members() :: [node()]
   def members, do: Ring.nodes(ring())
+
+  @doc "The members we can reach right now."
+  @spec up() :: MapSet.t(node())
+  def up, do: :persistent_term.get(@pt_up, MapSet.new([node()]))
+
+  @doc "Known members we cannot reach."
+  @spec down() :: [node()]
+  def down do
+    reachable = up()
+    Enum.reject(members(), &MapSet.member?(reachable, &1))
+  end
+
+  @doc """
+  Drops `node` from the ring for good.
+
+  Until an operator does this, a node that is down keeps its share of the
+  keyspace and its pending hints, because its data is still its responsibility.
+  """
+  @spec forget(node()) :: :ok
+  def forget(node), do: GenServer.call(__MODULE__, {:forget, node})
 
   @doc "Asks the cluster process to re-check `node` right now."
   def check(node), do: GenServer.cast(__MODULE__, {:check, node})
@@ -41,8 +71,8 @@ defmodule Kurwa.Cluster do
   def init(_opts) do
     :ok = :net_kernel.monitor_nodes(true, [{:node_type, :visible}])
 
-    state = %{members: MapSet.new([node()])}
-    publish(state.members)
+    state = %{members: MapSet.new([node()]), up: MapSet.new([node()])}
+    publish(state)
 
     connect_seeds()
     Enum.each(Node.list(), &check/1)
@@ -52,8 +82,25 @@ defmodule Kurwa.Cluster do
   end
 
   @impl true
+  def handle_call({:forget, node}, _from, state) do
+    if node == node() do
+      {:reply, {:error, :cannot_forget_self}, state}
+    else
+      state = %{
+        state
+        | members: MapSet.delete(state.members, node),
+          up: MapSet.delete(state.up, node)
+      }
+
+      Logger.warning("kurwadb: forgetting #{node}: its keyspace is being reassigned")
+      publish(state)
+      {:reply, :ok, state}
+    end
+  end
+
+  @impl true
   def handle_cast({:check, node}, state) do
-    if MapSet.member?(state.members, node) do
+    if MapSet.member?(state.up, node) do
       {:noreply, state}
     else
       verify(node)
@@ -63,13 +110,21 @@ defmodule Kurwa.Cluster do
 
   @impl true
   def handle_cast({:join, node}, state) do
-    if MapSet.member?(state.members, node) do
+    if MapSet.member?(state.up, node) do
       {:noreply, state}
     else
-      members = MapSet.put(state.members, node)
-      Logger.info("kurwadb: node joined: #{node} (members: #{MapSet.size(members)})")
-      publish(members)
-      {:noreply, %{state | members: members}}
+      known? = MapSet.member?(state.members, node)
+      state = %{state | members: MapSet.put(state.members, node), up: MapSet.put(state.up, node)}
+
+      Logger.info(
+        "kurwadb: node #{if known?, do: "is back", else: "joined"}: #{node} " <>
+          "(up: #{MapSet.size(state.up)}/#{MapSet.size(state.members)})"
+      )
+
+      publish(state)
+      # Whatever it missed while it was away can go out now.
+      Kurwa.Handoff.kick()
+      {:noreply, state}
     end
   end
 
@@ -81,11 +136,16 @@ defmodule Kurwa.Cluster do
 
   @impl true
   def handle_info({:nodedown, node, _info}, state) do
-    if MapSet.member?(state.members, node) do
-      members = MapSet.delete(state.members, node)
-      Logger.warning("kurwadb: node left: #{node} (members: #{MapSet.size(members)})")
-      publish(members)
-      {:noreply, %{state | members: members}}
+    if MapSet.member?(state.up, node) do
+      state = %{state | up: MapSet.delete(state.up, node)}
+
+      Logger.warning(
+        "kurwadb: node unreachable: #{node} (up: #{MapSet.size(state.up)}/" <>
+          "#{MapSet.size(state.members)}) - its writes are being kept as hints"
+      )
+
+      publish(state)
+      {:noreply, state}
     else
       {:noreply, state}
     end
@@ -140,8 +200,9 @@ defmodule Kurwa.Cluster do
     end
   end
 
-  defp publish(members) do
-    :persistent_term.put(@pt_key, Ring.new(MapSet.to_list(members), Config.vnodes()))
+  defp publish(state) do
+    :persistent_term.put(@pt_ring, Ring.new(MapSet.to_list(state.members), Config.vnodes()))
+    :persistent_term.put(@pt_up, state.up)
   end
 
   defp empty_ring, do: Ring.new([node()], Config.vnodes())

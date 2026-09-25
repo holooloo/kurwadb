@@ -157,6 +157,9 @@ defmodule Kurwa.Gateway.Router do
     json(conn, 200, %{
       node: to_string(info.node),
       members: Enum.map(info.members, &to_string/1),
+      up: Enum.map(info.up, &to_string/1),
+      down: Enum.map(info.down, &to_string/1),
+      handoff: stringify(info.handoff),
       vnodes: info.vnodes,
       n: info.n,
       r: info.r,

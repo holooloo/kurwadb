@@ -33,6 +33,11 @@ config :kurwadb,
   seeds: [],
   seed_retry_interval: 5_000,
 
+  # hinted handoff: writes a replica missed, replayed when it is back
+  handoff_interval: 5_000,
+  handoff_max_hints: 100_000,
+  handoff_batch: 500,
+
   # gateways
   start_gateway: true,
   http_port: 4040,

@@ -74,6 +74,9 @@ defmodule Kurwa do
     %{
       node: node(),
       members: Ring.nodes(ring),
+      up: ring |> Ring.nodes() |> Enum.filter(&MapSet.member?(Cluster.up(), &1)),
+      down: Cluster.down(),
+      handoff: Kurwa.Handoff.depth(),
       vnodes: ring.vnodes,
       n: Config.n(),
       r: Config.r(),

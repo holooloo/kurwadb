@@ -3,7 +3,7 @@ defmodule Kurwa.Replica do
   The surface one node exposes to its peers.
 
   Every cross-node call in kurwadb goes through this module, so the wire
-  protocol between nodes is exactly these four functions. Records arriving here
+  protocol between nodes is exactly these five functions. Records arriving here
   came off the network, so they are shape-checked before they reach the engine.
   """
 
@@ -24,6 +24,20 @@ defmodule Kurwa.Replica do
     else
       {:error, {:bad_record, record}}
     end
+  end
+
+  @doc """
+  Merges a batch of replicated records. Used by `Kurwa.Handoff` when a replica
+  comes back and has to catch up.
+  """
+  @spec put_many([Record.t()]) :: :ok | {:error, term()}
+  def put_many(records) when is_list(records) do
+    Enum.reduce_while(records, :ok, fn record, :ok ->
+      case put(record) do
+        {:ok, _winner} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   @doc "Local version of `key`, tombstones included."

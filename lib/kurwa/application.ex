@@ -15,6 +15,7 @@ defmodule Kurwa.Application do
     children =
       [
         Kurwa.Store.Supervisor,
+        Kurwa.Handoff,
         Kurwa.Cluster,
         Kurwa.Extractor.Cache,
         Kurwa.Extractor.Flight

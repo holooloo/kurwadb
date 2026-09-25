@@ -8,21 +8,25 @@ defmodule Kurwa.Coordinator do
   version.
 
   Reads merge whatever answered and repair the replicas that were behind, which
-  is how a replica that missed a write catches up. Note what that implies: a key
-  that is never read is never repaired. That is the gap hinted handoff fills, and
-  it is not implemented yet (see README).
+  heals a replica that answered with something stale. Read repair alone is not
+  enough, though: it only reaches replicas that answered inside the quorum
+  window, and a replica that was down was never asked at all. So a write that
+  could not reach one of its replicas also leaves a hint (`Kurwa.Handoff`), and
+  that hint is replayed when the replica comes back.
   """
 
   alias Kurwa.Cluster
-  alias Kurwa.Config
   alias Kurwa.Clock
+  alias Kurwa.Config
+  alias Kurwa.Handoff
+  alias Kurwa.Placement
   alias Kurwa.Quorum
   alias Kurwa.Record
-  alias Kurwa.Ring
   alias Kurwa.Store
 
   @type error ::
           {:error, :ring_empty}
+          | {:error, :no_replicas_reachable}
           | {:error, {:quorum_not_met, map()}}
 
   @doc "Adds `key` to the set."
@@ -36,18 +40,19 @@ defmodule Kurwa.Coordinator do
   @doc "Is `key` in the set?"
   @spec member?(Record.key(), keyword()) :: {:ok, boolean()} | error()
   def member?(key, opts \\ []) when is_binary(key) do
-    with {:ok, prefs} <- preflist(key, opts) do
+    with {:ok, placement} <- placement(key, opts) do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
-      r = quorum_size(Keyword.get(opts, :r, Config.r()), prefs)
+      targets = placement.up
+      r = quorum_size(Keyword.get(opts, :r, Config.r()), targets)
 
-      outcome = Quorum.run(prefs, &replica_get(&1, key, timeout), r, timeout)
+      outcome = Quorum.run(targets, &replica_get(&1, key, timeout), r, timeout)
 
       if length(outcome.ok) >= r do
         winner = outcome.ok |> Enum.map(fn {_node, record} -> record end) |> Record.merge_all()
-        repair(prefs, outcome.ok, winner)
+        repair(outcome.ok, winner)
         {:ok, Record.alive?(winner)}
       else
-        {:error, {:quorum_not_met, details(:read, r, prefs, outcome)}}
+        {:error, {:quorum_not_met, details(:read, r, placement, outcome)}}
       end
     end
   end
@@ -85,34 +90,41 @@ defmodule Kurwa.Coordinator do
   end
 
   defp write(key, alive?, opts) do
-    with {:ok, prefs} <- preflist(key, opts) do
+    with {:ok, placement} <- placement(key, opts) do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
-      w = quorum_size(Keyword.get(opts, :w, Config.w()), prefs)
+      targets = placement.up
+      w = quorum_size(Keyword.get(opts, :w, Config.w()), targets)
       record = Record.new(key, Clock.tick(), node(), alive?)
 
-      outcome = Quorum.run(prefs, &replica_put(&1, record, timeout), w, timeout)
+      outcome = Quorum.run(targets, &replica_put(&1, record, timeout), w, timeout)
 
       if length(outcome.ok) >= w do
+        # We told the client yes, so every replica that did not take the write
+        # gets a hint: the ones that were unreachable, and the ones that tried
+        # and failed. A replayed hint is an ordinary idempotent put.
+        failed = Enum.map(outcome.failed, fn {node, _reason} -> node end)
+        Handoff.store_all(placement.down ++ failed, record)
         :ok
       else
-        {:error, {:quorum_not_met, details(:write, w, prefs, outcome)}}
+        {:error, {:quorum_not_met, details(:write, w, placement, outcome)}}
       end
     end
   end
 
-  defp preflist(key, opts) do
+  defp placement(key, opts) do
     n = Keyword.get(opts, :n, Config.n())
 
-    case Ring.preflist(Cluster.ring(), key, n) do
-      [] -> {:error, :ring_empty}
-      prefs -> {:ok, prefs}
+    case Placement.targets(key, n) do
+      %{primaries: []} -> {:error, :ring_empty}
+      %{up: []} -> {:error, :no_replicas_reachable}
+      placement -> {:ok, placement}
     end
   end
 
-  # How many acks we insist on. The preference list can be shorter than `n` when
-  # the cluster is smaller or nodes are down; `strict_quorum: true` keeps the
-  # configured number and fails such requests, the default caps it at the
-  # replicas that actually exist and keeps serving.
+  # How many acks we insist on. The reachable replica list can be shorter than
+  # `n` when the cluster is smaller or nodes are down; `strict_quorum: true`
+  # keeps the configured number and fails such requests, the default caps it at
+  # the replicas that can actually answer and keeps serving.
   defp quorum_size(configured, prefs) do
     if Config.get(:strict_quorum) do
       configured
@@ -151,10 +163,11 @@ defmodule Kurwa.Coordinator do
 
   # Read repair: push the winner to every replica that answered with something
   # older. Fire and forget - the read has already been answered, and a lost
-  # repair just means the next read repairs it instead.
-  defp repair(_prefs, _answers, nil), do: :ok
+  # repair just means the next read repairs it instead. Replicas that did not
+  # answer are the handoff's job, not this one's.
+  defp repair(_answers, nil), do: :ok
 
-  defp repair(_prefs, answers, winner) do
+  defp repair(answers, winner) do
     for {node, record} <- answers, not Record.same_version?(record, winner) do
       :erpc.cast(node, Kurwa.Replica, :put, [winner])
     end
@@ -162,12 +175,13 @@ defmodule Kurwa.Coordinator do
     :ok
   end
 
-  defp details(op, needed, prefs, outcome) do
+  defp details(op, needed, placement, outcome) do
     %{
       op: op,
       needed: needed,
       got: length(outcome.ok),
-      replicas: prefs,
+      replicas: placement.primaries,
+      unreachable: placement.down,
       failed: Map.new(outcome.failed)
     }
   end

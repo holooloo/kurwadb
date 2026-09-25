@@ -10,6 +10,7 @@ defmodule Kurwa.NineP.Fs do
       remove -> delete
 
       /ctl                write "compact" | "gc" | "sync" | "join node@host"
+                          | "forget node@host"
       /stats              read: local keys, lamport, members
       /ring               read: ring membership and placement settings
       /keys/<key>         the default set, key as the file name
@@ -250,6 +251,15 @@ defmodule Kurwa.NineP.Fs do
     :ok
   end
 
+  defp control("forget " <> target) do
+    node = target |> String.trim() |> String.to_atom()
+
+    case Cluster.forget(node) do
+      :ok -> :ok
+      {:error, reason} -> {:error, inspect(reason)}
+    end
+  end
+
   defp control("join " <> target) do
     node = target |> String.trim() |> String.to_atom()
 
@@ -294,17 +304,26 @@ defmodule Kurwa.NineP.Fs do
     """
     node #{info.node}
     members #{length(info.members)}
+    up #{length(info.up)}
     local_keys #{info.local_keys}
     lamport #{info.lamport}
     shards #{info.shards}
     engine #{inspect(info.engine)}
+    handoff #{info.handoff |> Map.values() |> Enum.sum()}
     """
   end
 
   defp content(:ring) do
     ring = Cluster.ring()
 
-    members = ring |> Ring.nodes() |> Enum.map_join("\n", &"member #{&1}")
+    reachable = Cluster.up()
+
+    members =
+      ring
+      |> Ring.nodes()
+      |> Enum.map_join("\n", fn node ->
+        "member #{node} #{if MapSet.member?(reachable, node), do: "up", else: "down"}"
+      end)
 
     """
     #{members}
