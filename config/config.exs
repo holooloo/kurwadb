@@ -11,6 +11,15 @@ config :kurwadb,
   # ring
   vnodes: 128,
 
+  # extractor: read-path cache, off by default (it trades linearizable reads
+  # for bounded staleness - see Kurwa.Extractor)
+  cache: false,
+  cache_ttl: 5_000,
+  cache_negative_ttl: 500,
+  cache_max_keys: 1_000_000,
+  cache_sweep_interval: 1_000,
+  cache_broadcast: true,
+
   # local storage
   engine: Kurwa.Store.Ets,
   shards: 8,

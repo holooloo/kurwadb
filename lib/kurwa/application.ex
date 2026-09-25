@@ -15,7 +15,9 @@ defmodule Kurwa.Application do
     children =
       [
         Kurwa.Store.Supervisor,
-        Kurwa.Cluster
+        Kurwa.Cluster,
+        Kurwa.Extractor.Cache,
+        Kurwa.Extractor.Flight
       ] ++ gateway() ++ ninep()
 
     Logger.info(

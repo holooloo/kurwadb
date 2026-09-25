@@ -14,7 +14,7 @@ defmodule Kurwa.Gateway.Router do
       GET    /intersection/k/:key?sets=a,b  member of ALL of these sets
 
       GET    /count                 approximate live keys
-      GET    /info                  ring, quorum settings, local stats
+      GET    /info                  ring, quorum settings, local and cache stats
       GET    /health                liveness (never authenticated)
 
   Keys are URL path segments, so a key containing `/` must be percent-encoded.
@@ -165,7 +165,8 @@ defmodule Kurwa.Gateway.Router do
       shards: info.shards,
       engine: inspect(info.engine),
       local_keys: info.local_keys,
-      lamport: info.lamport
+      lamport: info.lamport,
+      cache: info.cache
     })
   end
 

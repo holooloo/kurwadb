@@ -12,15 +12,16 @@ defmodule Kurwa do
   hash ring, with merges that need no coordination.
 
   These functions work on the default, unnamed set. For named sets and for set
-  algebra over them, see `Kurwa.Namespace`. Every function here coordinates a
-  quorum across the ring (`Kurwa.Coordinator`); for the deliberately node-local
-  variants, see `Kurwa.Store`.
+  algebra over them, see `Kurwa.Namespace`. Everything here goes through
+  `Kurwa.Extractor` (cache and single-flight, both pass-through unless the cache
+  is enabled) and then `Kurwa.Coordinator`, which is the quorum across the ring;
+  for the deliberately node-local variants, see `Kurwa.Store`.
   """
 
   alias Kurwa.Cluster
   alias Kurwa.Config
   alias Kurwa.Coordinator
-  alias Kurwa.Key
+  alias Kurwa.Extractor
   alias Kurwa.Record
   alias Kurwa.Ring
 
@@ -33,7 +34,7 @@ defmodule Kurwa do
   Options: `:n`, `:w`, `:timeout` override the configured defaults for this call.
   """
   @spec add(key(), opts()) :: :ok | {:error, term()}
-  def add(key, opts \\ []) when is_binary(key), do: Coordinator.add(Key.encode(key), opts)
+  def add(key, opts \\ []) when is_binary(key), do: Extractor.add(key, opts)
 
   @doc "Adds `key`, raising `Kurwa.Error` if the quorum is not met."
   @spec add!(key(), opts()) :: :ok
@@ -41,7 +42,7 @@ defmodule Kurwa do
 
   @doc "Removes `key` from the set. Idempotent."
   @spec delete(key(), opts()) :: :ok | {:error, term()}
-  def delete(key, opts \\ []) when is_binary(key), do: Coordinator.delete(Key.encode(key), opts)
+  def delete(key, opts \\ []) when is_binary(key), do: Extractor.delete(key, opts)
 
   @doc "Removes `key`, raising `Kurwa.Error` if the quorum is not met."
   @spec delete!(key(), opts()) :: :ok
@@ -59,7 +60,7 @@ defmodule Kurwa do
 
   @doc "Like `member?/2`, but returns the error instead of raising."
   @spec fetch(key(), opts()) :: {:ok, boolean()} | {:error, term()}
-  def fetch(key, opts \\ []) when is_binary(key), do: Coordinator.member?(Key.encode(key), opts)
+  def fetch(key, opts \\ []) when is_binary(key), do: Extractor.member?(key, opts)
 
   @doc "Approximate number of live keys in the cluster. See `Kurwa.Coordinator.count/1`."
   @spec count(opts()) :: {:ok, map()} | {:error, term()}
@@ -81,7 +82,8 @@ defmodule Kurwa do
       shards: Config.shards(),
       engine: Config.engine(),
       local_keys: Kurwa.Store.count(),
-      lamport: Kurwa.Clock.peek()
+      lamport: Kurwa.Clock.peek(),
+      cache: Extractor.stats()
     }
   end
 

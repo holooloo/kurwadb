@@ -22,7 +22,7 @@ defmodule Kurwa.Namespace do
   """
 
   alias Kurwa.Config
-  alias Kurwa.Coordinator
+  alias Kurwa.Extractor
   alias Kurwa.Key
 
   @type name :: binary()
@@ -30,15 +30,15 @@ defmodule Kurwa.Namespace do
 
   @doc "Adds `key` to the set `name`."
   @spec add(name(), binary(), keyword()) :: :ok | {:error, term()}
-  def add(name, key, opts \\ []), do: Coordinator.add(Key.encode(name, key), opts)
+  def add(name, key, opts \\ []), do: Extractor.add(key, [set: name] ++ opts)
 
   @doc "Removes `key` from the set `name`."
   @spec delete(name(), binary(), keyword()) :: :ok | {:error, term()}
-  def delete(name, key, opts \\ []), do: Coordinator.delete(Key.encode(name, key), opts)
+  def delete(name, key, opts \\ []), do: Extractor.delete(key, [set: name] ++ opts)
 
   @doc "Is `key` in the set `name`?"
   @spec member?(name(), binary(), keyword()) :: result()
-  def member?(name, key, opts \\ []), do: Coordinator.member?(Key.encode(name, key), opts)
+  def member?(name, key, opts \\ []), do: Extractor.member?(key, [set: name] ++ opts)
 
   @doc """
   Union: is `key` in *any* of these sets?
