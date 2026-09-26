@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="690" viewBox="0 0 900 690" role="img" aria-label="kurwadb component stack">
+<title>kurwadb component stack</title>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#a1a1aa"/></marker></defs>
+<rect width="900" height="690" fill="#fcfcfb"/>
+<text x="450.0" y="30" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="17" font-weight="600" fill="#18181b" text-anchor="middle">How the components fit together</text>
+<text x="450.0" y="50" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#71717a" text-anchor="middle">every cost measured, not estimated · one laptop, three nodes sharing a CPU</text>
+<rect x="70" y="72" width="370" height="46" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="255.0" y="93.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="500" fill="#18181b" text-anchor="middle">HTTP client</text>
+<text x="255.0" y="110.25" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="11" font-weight="400" fill="#71717a" text-anchor="middle">PUT / GET / DELETE  /k/:key</text>
+<rect x="460" y="72" width="370" height="46" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="645.0" y="93.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="13.5" font-weight="500" fill="#18181b" text-anchor="middle">9P mount</text>
+<text x="645.0" y="110.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#71717a" text-anchor="middle">ls · cat · stat — no client library</text>
+<line x1="255" y1="118" x2="255" y2="140" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<line x1="645" y1="118" x2="645" y2="140" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="70" y="140" width="370" height="44" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="255.0" y="168.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="13" font-weight="500" fill="#18181b" text-anchor="middle">Gateway.Router</text>
+<rect x="460" y="140" width="370" height="44" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="645.0" y="168.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="13" font-weight="500" fill="#18181b" text-anchor="middle">NineP.Server</text>
+<text x="450.0" y="133" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#71717a" text-anchor="middle" font-style="italic">thin adapters — no logic of their own</text>
+<path d="M 255 184 L 255 196 L 450 196 L 450 214" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<path d="M 645 184 L 645 196 L 450 196" fill="none" stroke="#a1a1aa" stroke-width="1.4"/>
+<rect x="200" y="214" width="500" height="48" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="450.0" y="236.25" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="500" fill="#18181b" text-anchor="middle">Kurwa  /  Kurwa.Namespace</text>
+<text x="450.0" y="253.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#71717a" text-anchor="middle">keys, named sets, union &amp; intersection</text>
+<line x1="450" y1="262" x2="450" y2="284" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="200" y="284" width="500" height="72" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="450.0" y="309.75" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="500" fill="#18181b" text-anchor="middle">Kurwa.Extractor</text>
+<text x="450.0" y="327.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#71717a" text-anchor="middle">cache + single-flight</text>
+<text x="450.0" y="343.75" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">cache hit ≈ 0.3 µs · 1000 concurrent misses → 1 quorum read</text>
+<line x1="450" y1="356" x2="450" y2="374" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="130" y="376" width="640" height="116" rx="8" fill="#fffbeb" stroke="#b45309" stroke-width="1"/>
+<text x="150" y="398" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="13.5" font-weight="600" fill="#b45309" text-anchor="start">Kurwa.Coordinator</text>
+<text x="150" y="414" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#71717a" text-anchor="start">leaderless — any node coordinates any key</text>
+<rect x="146" y="424" width="190" height="54" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="241.0" y="440.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Placement</text>
+<text x="241.0" y="457.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">who owns the key,</text>
+<text x="241.0" y="473.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">who is reachable · 0.3 µs</text>
+<rect x="352" y="424" width="190" height="54" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="447.0" y="440.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Quorum</text>
+<text x="447.0" y="457.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">first 2 of 3 to answer</text>
+<text x="447.0" y="473.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">1.8 µs</text>
+<rect x="558" y="424" width="196" height="54" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="656.0" y="440.5" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Handoff</text>
+<text x="656.0" y="457.0" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">what a down replica</text>
+<text x="656.0" y="473.5" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">missed, per node</text>
+<path d="M 450 492 L 450 512 L 190 512 L 190 542" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<path d="M 450 492 L 450 512 L 450 512 L 450 542" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<path d="M 450 492 L 450 512 L 710 512 L 710 542" fill="none" stroke="#a1a1aa" stroke-width="1.4" marker-end="url(#a)"/>
+<rect x="319.26" y="497" width="261.48" height="19" rx="3" fill="#fcfcfb"/>
+<text x="450.0" y="508" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11" font-weight="400" fill="#71717a" text-anchor="middle" font-style="italic">Erlang distribution — never 9P, never HTTP</text>
+<rect x="70" y="542" width="240" height="104" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1"/>
+<text x="190" y="564" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="600" fill="#0f766e" text-anchor="middle">node A</text>
+<rect x="86" y="574" width="208" height="60" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="190.0" y="593.75" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Kurwa.Store</text>
+<text x="190.0" y="610.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">shard = phash2(key)</text>
+<text x="190.0" y="626.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10" font-weight="400" fill="#71717a" text-anchor="middle">ETS + WAL · put 1.5 µs / get 0.3 µs</text>
+<rect x="330" y="542" width="240" height="104" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1"/>
+<text x="450" y="564" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="600" fill="#0f766e" text-anchor="middle">node B</text>
+<rect x="346" y="574" width="208" height="60" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="450.0" y="593.75" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Kurwa.Store</text>
+<text x="450.0" y="610.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">shard = phash2(key)</text>
+<text x="450.0" y="626.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10" font-weight="400" fill="#71717a" text-anchor="middle">ETS + WAL · put 1.5 µs / get 0.3 µs</text>
+<rect x="590" y="542" width="240" height="104" rx="8" fill="#f0fdfa" stroke="#0f766e" stroke-width="1"/>
+<text x="710" y="564" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="12.5" font-weight="600" fill="#0f766e" text-anchor="middle">node C</text>
+<rect x="606" y="574" width="208" height="60" rx="8" fill="#ffffff" stroke="#d4d4d8" stroke-width="1"/>
+<text x="710.0" y="593.75" font-family="ui-monospace,SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace" font-size="12" font-weight="500" fill="#18181b" text-anchor="middle">Kurwa.Store</text>
+<text x="710.0" y="610.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10.5" font-weight="400" fill="#71717a" text-anchor="middle">shard = phash2(key)</text>
+<text x="710.0" y="626.25" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="10" font-weight="400" fill="#71717a" text-anchor="middle">ETS + WAL · put 1.5 µs / get 0.3 µs</text>
+<text x="450.0" y="670" font-family="ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="11.5" font-weight="400" fill="#71717a" text-anchor="middle" font-style="italic">a key is its own payload, so the replica-local answer is one :ets.lookup</text>
+</svg>
