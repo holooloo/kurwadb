@@ -146,6 +146,20 @@ defmodule Kurwa.Store.EtsTest do
     Ets.close(state)
   end
 
+  test "sync_on_write puts the record on disk before any periodic flush", %{dir: dir} do
+    name = :"ets_sync_#{System.unique_integer([:positive])}"
+    {:ok, state} = Ets.open(name, dir: Path.join(dir, "synced"), sync_on_write: true)
+
+    {:ok, _, state} = Ets.put(state, record("durable", lamport: 1))
+
+    # Read the log back while the engine is still open and has flushed nothing on
+    # a timer: with sync_on_write the entry is already durable.
+    assert {:ok, [{"durable", 1, _, true, _}], 1} =
+             Kurwa.Store.Wal.replay(Path.join(dir, "synced"), [], fn rec, acc -> [rec | acc] end)
+
+    Ets.close(state)
+  end
+
   test "fold visits every record, tombstones included", %{name: name, state: state} do
     {:ok, _, state} = Ets.put(state, record("a", lamport: 1))
     {:ok, _, _state} = Ets.put(state, record("b", lamport: 1, alive?: false))

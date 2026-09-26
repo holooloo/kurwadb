@@ -27,13 +27,20 @@ this event", seen-URL frontiers.
 
 ## Status
 
-Working and covered by 167 tests: the store, the ring, quorum reads and writes,
-read repair, hinted handoff, named sets, the HTTP API and the 9P server
-(end-to-end over a real socket).
+Working, with 168 unit tests and 10 cluster tests.
 
-Verified by hand on three nodes, which is how the handoff design was found -
-see [ARCHITECTURE.md](ARCHITECTURE.md#failure-behaviour-as-measured).
-An automated multi-node test is still a gap.
+```sh
+mix test                      # 168 tests, ~1s
+mix test --include cluster    # 10 more, ~6s: three real nodes, three real BEAMs
+```
+
+The cluster tests boot actual distributed nodes and assert the guarantees this
+README makes: replication, cross-node reads, stable placement across an outage,
+hinted handoff, read repair, strict versus lenient quorums, and what a hard crash
+costs. They are opt-in only because they start BEAMs with fixed node names.
+
+Running them is how two design holes were found - see
+[ARCHITECTURE.md](ARCHITECTURE.md#failure-behaviour-as-measured).
 
 ## Quick start
 
@@ -121,6 +128,7 @@ variables are read at boot (`config/runtime.exs`).
 | `data_dir` | `KURWA_DATA_DIR` | `data` | WAL and snapshots, scoped per node |
 | `seeds` | `KURWA_SEEDS` | `[]` | comma-separated nodes to connect to |
 | `tombstone_ttl` | `KURWA_TOMBSTONE_TTL_MS` | 24h | must exceed your longest outage |
+| `wal_sync_on_write` | `KURWA_WAL_SYNC_ON_WRITE` | `false` | fsync every write; closes the crash window at a cost per write |
 | `cache` | | `false` | extractor cache; trades linearizable reads for bounded staleness |
 | `http_port` | `KURWA_HTTP_PORT` | 4040 | |
 | `start_9p` `ninep_port` | `KURWA_9P` `KURWA_9P_PORT` | `false`, 564 | |
@@ -128,6 +136,13 @@ variables are read at boot (`config/runtime.exs`).
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
 allowed and logged as a warning, because it is a real durability decision.
+
+**Durability has a window by default.** A write reaches the log immediately but
+the log is fsynced every `wal_sync_interval` (100ms), so a node killed hard can
+come back missing writes it had already acknowledged. Replication is the intended
+answer - another replica has it, and a read repairs the one that lost it - and
+`wal_sync_on_write: true` closes the window locally if you would rather pay an
+fsync per write. There is a cluster test for each of those two behaviours.
 
 ## Layout
 
@@ -149,6 +164,20 @@ Kurwa.NineP           9P2000
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure
 behaviour, and what is deliberately not built yet.
+[docs/adr/0001](docs/adr/0001-key-only-distributed-set.md) is the case for the
+key-only model against other stores, with the component diagrams and the measured
+numbers.
+
+## Measured
+
+One laptop, all three nodes sharing the same CPU.
+
+| | |
+|---|---|
+| local membership check | 365 ns |
+| quorum write / read across 3 nodes | ~47 µs single-client latency |
+| the same, 64 concurrent clients | 54k writes/sec, 59k reads/sec |
+| RAM per key | 120 B (13-byte keys), 144 B (36-byte keys) |
 
 ## License
 

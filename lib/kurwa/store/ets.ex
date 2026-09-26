@@ -9,6 +9,13 @@ defmodule Kurwa.Store.Ets do
 
   Live keys are tracked in an `:atomics` counter instead of `:ets.info(:size)`,
   because the table also holds tombstones and `count/0` must not see them.
+
+  Durability has a window by default. A write is appended to the log immediately
+  but the log is fsynced periodically (`wal_sync_interval`), so a node that is
+  killed hard can come back missing the last few milliseconds of writes it had
+  already acknowledged. `wal_sync_on_write: true` closes the window at the cost of
+  an fsync per write. With replication the usual answer is neither: another
+  replica has the write, and read repair is what puts it back.
   """
 
   @behaviour Kurwa.Store.Engine
@@ -19,7 +26,7 @@ defmodule Kurwa.Store.Ets do
 
   require Logger
 
-  defstruct [:name, :table, :live, :wal, :dir, :snapshot_after]
+  defstruct [:name, :table, :live, :wal, :dir, :snapshot_after, sync_on_write: false]
 
   @type t :: %__MODULE__{}
 
@@ -27,6 +34,7 @@ defmodule Kurwa.Store.Ets do
   def open(name, opts) do
     dir = Keyword.fetch!(opts, :dir)
     snapshot_after = Keyword.get(opts, :snapshot_after, 100_000)
+    sync_on_write = Keyword.get(opts, :sync_on_write, false)
 
     table =
       :ets.new(table_name(name), [
@@ -54,7 +62,8 @@ defmodule Kurwa.Store.Ets do
               live: live,
               wal: %{wal | appended: from_wal},
               dir: dir,
-              snapshot_after: snapshot_after
+              snapshot_after: snapshot_after,
+              sync_on_write: sync_on_write
             }
 
             {:ok, state}
@@ -106,6 +115,9 @@ defmodule Kurwa.Store.Ets do
 
       case Wal.append(state.wal, record) do
         {:ok, wal} ->
+          # Without this the write is durable only as far as the next periodic
+          # fsync, so a hard crash can lose the window. Costs an fsync per write.
+          if state.sync_on_write, do: Wal.sync(wal)
           {:ok, record, %{state | wal: wal}}
 
         {:error, reason} ->

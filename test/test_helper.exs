@@ -7,4 +7,7 @@ Application.get_env(:kurwadb, :data_dir)
 
 {:ok, _} = Application.ensure_all_started(:kurwadb)
 
-ExUnit.start()
+# The cluster tests boot real nodes, which takes seconds each. They are opt-in:
+#
+#     mix test --include cluster
+ExUnit.start(exclude: [:cluster])

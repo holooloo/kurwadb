@@ -56,7 +56,11 @@ defmodule Kurwa.Store.Shard do
     engine = Config.engine()
     dir = Kurwa.Store.dir(index)
 
-    opts = [dir: dir, snapshot_after: Config.get(:wal_snapshot_after)]
+    opts = [
+      dir: dir,
+      snapshot_after: Config.get(:wal_snapshot_after),
+      sync_on_write: Config.get(:wal_sync_on_write)
+    ]
 
     case engine.open(name(index), opts) do
       {:ok, engine_state} ->
