@@ -164,6 +164,20 @@ Kurwa.NineP           9P2000
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure
 behaviour, and what is deliberately not built yet.
+[docs/adr/0001](docs/adr/0001-key-only-distributed-set.md) is the case for the
+key-only model against other stores, with the component diagrams and the measured
+numbers.
+
+## Measured
+
+One laptop, all three nodes sharing the same CPU.
+
+| | |
+|---|---|
+| local membership check | 365 ns |
+| quorum write / read across 3 nodes | ~47 µs single-client latency |
+| the same, 64 concurrent clients | 54k writes/sec, 59k reads/sec |
+| RAM per key | 120 B (13-byte keys), 144 B (36-byte keys) |
 
 ## License
 

@@ -102,8 +102,16 @@ defmodule Kurwa.TestCluster do
     _kind, _reason -> :ok
   end
 
-  @doc "Runs `{module, function, args}` on a node."
-  def call(%{pid: pid}, module, function, args), do: :peer.call(pid, module, function, args)
+  @doc """
+  Runs `{module, function, args}` on a node.
+
+  `:peer.call/4` defaults to a 5s timeout, which anything that measures or waits
+  will blow through, so the timeout is explicit here.
+  """
+  def call(peer, module, function, args, timeout \\ 15_000)
+
+  def call(%{pid: pid}, module, function, args, timeout),
+    do: :peer.call(pid, module, function, args, timeout)
 
   @doc "`Kurwa.info/0` as that node sees it."
   def info(peer), do: call(peer, Kurwa, :info, [])

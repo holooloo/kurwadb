@@ -34,7 +34,14 @@ defmodule Kurwa.Cluster do
 
   @doc "Current ring, built from every known member. Safe to call before the process starts."
   @spec ring() :: Ring.t()
-  def ring, do: :persistent_term.get(@pt_ring, empty_ring())
+  def ring do
+    # Not `:persistent_term.get(key, empty_ring())`: arguments are evaluated
+    # eagerly, so that builds a throwaway 128-point ring on every single request.
+    case :persistent_term.get(@pt_ring, nil) do
+      nil -> empty_ring()
+      ring -> ring
+    end
+  end
 
   @doc "Every kurwadb node we have verified, reachable or not."
   @spec members() :: [node()]
@@ -42,7 +49,12 @@ defmodule Kurwa.Cluster do
 
   @doc "The members we can reach right now."
   @spec up() :: MapSet.t(node())
-  def up, do: :persistent_term.get(@pt_up, MapSet.new([node()]))
+  def up do
+    case :persistent_term.get(@pt_up, nil) do
+      nil -> MapSet.new([node()])
+      up -> up
+    end
+  end
 
   @doc "Known members we cannot reach."
   @spec down() :: [node()]

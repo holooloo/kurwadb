@@ -262,8 +262,9 @@ RAM. Two shapes fit it:
   storage - the "key = hash(value)" model - and its arena (append-only) plus
   separate index layout is a good blueprint for immutable on-disk sets.
 
-Keys cost roughly 60-90 bytes each in ETS, so ~100M keys per node is where RAM
-stops being the obvious answer.
+Measured, not estimated: a key costs 120 bytes in ETS with a 13-byte key and 144
+bytes with a 36-byte one (200k keys, `:ets.info(:memory)`). So 100M keys is
+~11 GB per node, and that is where RAM stops being the obvious answer.
 
 **A set registry.** `/sets` cannot be listed and there is no per-set count,
 because both are scans. The fix is pleasingly self-referential: keep the set
