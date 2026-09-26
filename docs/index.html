@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>kurwadb</title>
+<meta name="description" content="Распределённое множество на Elixir. Хранит ключи и ничего больше: ни значений, ни сканов, ни лидера.">
+<meta property="og:title" content="kurwadb — ключ сам себе значение">
+<meta property="og:description" content="Распределённое множество на Elixir. Хранит ключи и ничего больше.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://kurwadb.dev/">
+<link rel="canonical" href="https://kurwadb.dev/">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ground: #fbfaf7;
+    --surface: #ffffff;
+    --ink: #1b1a17;
+    --muted: #6e6a62;
+    --faint: #98938a;
+    --rule: #e6e2da;
+    --rule-strong: #d3cec3;
+    --accent: #9a4f0a;
+    --accent-soft: #fdf5e9;
+    --teal: #0f6f68;
+    --code-bg: #f4f1ea;
+    --plate: #fcfcfb;
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #14130f;
+      --surface: #1b1a15;
+      --ink: #f2efe8;
+      --muted: #a8a298;
+      --faint: #7d786e;
+      --rule: #2c2a23;
+      --rule-strong: #3b382f;
+      --accent: #e2a35a;
+      --accent-soft: #241a0f;
+      --teal: #5fc7bd;
+      --code-bg: #1f1d17;
+      --plate: #fcfcfb;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground: #14130f;
+    --surface: #1b1a15;
+    --ink: #f2efe8;
+    --muted: #a8a298;
+    --faint: #7d786e;
+    --rule: #2c2a23;
+    --rule-strong: #3b382f;
+    --accent: #e2a35a;
+    --accent-soft: #241a0f;
+    --teal: #5fc7bd;
+    --code-bg: #1f1d17;
+    --plate: #fcfcfb;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1060px;
+    margin: 0 auto;
+    padding-inline: clamp(20px, 5vw, 56px);
+  }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:hover { text-decoration-thickness: 2px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* ---------------------------------------------------------------- hero */
+  header.hero { padding-block: clamp(56px, 11vw, 104px) clamp(40px, 7vw, 72px); }
+
+  .wordmark {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: clamp(32px, 6vw, 56px);
+  }
+  .wordmark b {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 1.05rem;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  .wordmark .eyebrow { transform: translateY(-1px); }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(2.45rem, 7.4vw, 4.6rem);
+    font-weight: 600;
+    letter-spacing: -0.035em;
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+
+  .lead {
+    margin: clamp(20px, 3.5vw, 30px) 0 0;
+    max-width: 50ch;
+    font-size: clamp(1.06rem, 2.1vw, 1.28rem);
+    color: var(--muted);
+    text-wrap: pretty;
+  }
+
+  .record {
+    margin-top: clamp(30px, 5vw, 46px);
+    padding: 20px 22px;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 3px;
+    background: var(--surface);
+    max-width: 58ch;
+  }
+  .record code { font-size: clamp(0.85rem, 2.4vw, 1.02rem); font-weight: 500; }
+  .record p { margin: 10px 0 0; font-size: 0.95rem; color: var(--muted); }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: clamp(28px, 5vw, 40px); }
+  .btn {
+    display: inline-block;
+    padding: 11px 20px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    font-size: 0.94rem;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--ink);
+    background: var(--surface);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--ground); }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* ------------------------------------------------------------- sections */
+  .row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px 40px;
+    padding-block: clamp(38px, 6vw, 62px);
+    border-top: 1px solid var(--rule);
+  }
+  @media (min-width: 860px) {
+    .row { grid-template-columns: 148px minmax(0, 1fr); gap: 0 48px; }
+    .rail { padding-top: 6px; }
+  }
+  .col { min-width: 0; }
+  .col > :first-child { margin-top: 0; }
+  .col > :last-child { margin-bottom: 0; }
+
+  h2 {
+    margin: 0 0 18px;
+    font-size: clamp(1.32rem, 2.6vw, 1.6rem);
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    text-wrap: balance;
+  }
+  p { max-width: 66ch; text-wrap: pretty; }
+
+  /* ---------------------------------------------------------------- chain */
+  .chain { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; max-width: 62ch; }
+  .chain li {
+    position: relative;
+    padding: 13px 0 13px 40px;
+    border-bottom: 1px dashed var(--rule);
+  }
+  .chain li:last-child { border-bottom: 0; padding-bottom: 0; }
+  .chain li::before {
+    content: "↓";
+    position: absolute;
+    left: 8px;
+    top: 13px;
+    color: var(--accent);
+    font-family: "IBM Plex Mono", monospace;
+  }
+  .chain li:first-child::before { content: "·"; }
+  .chain strong { font-weight: 600; }
+
+  /* ---------------------------------------------------------------- specs */
+  .specs { display: grid; gap: 2px; }
+  .spec {
+    display: grid;
+    gap: 2px 26px;
+    padding: 15px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .spec:last-child { border-bottom: 0; }
+  @media (min-width: 680px) {
+    .spec { grid-template-columns: 186px minmax(0, 1fr); align-items: baseline; }
+  }
+  .spec dt {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.74rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .spec dd { margin: 0; color: var(--ink); }
+
+  /* --------------------------------------------------------------- tables */
+  .scroll { overflow-x: auto; margin-block: 4px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--rule); }
+  th { font-weight: 500; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+
+  /* ----------------------------------------------------------------- code */
+  pre {
+    margin: 0;
+    padding: 18px 20px;
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    overflow-x: auto;
+    font-size: 0.875rem;
+    line-height: 1.7;
+  }
+  pre .c { color: var(--faint); }
+  pre .k { color: var(--teal); }
+
+  /* -------------------------------------------------------------- figures */
+  figure { margin: 0 0 26px; }
+  figure:last-of-type { margin-bottom: 0; }
+  .plate {
+    background: var(--plate);
+    border: 1px solid var(--rule-strong);
+    border-radius: 3px;
+    padding: 10px;
+    overflow-x: auto;
+  }
+  .plate img { display: block; width: 100%; min-width: 620px; max-width: 100%; height: auto; }
+  figcaption { margin-top: 9px; font-size: 0.86rem; color: var(--muted); }
+
+  /* --------------------------------------------------------------- limits */
+  .limits { list-style: none; margin: 0; padding: 0; max-width: 64ch; }
+  .limits li { padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .limits li:last-child { border-bottom: 0; }
+  .limits b { font-weight: 600; }
+
+  /* --------------------------------------------------------------- footer */
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-block: 34px 56px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 28px;
+    align-items: baseline;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="wordmark">
+      <b>kurwadb</b>
+      <span class="eyebrow">распределённое множество · elixir / beam</span>
+    </div>
+
+    <h1>Ключ сам себе значение</h1>
+
+    <p class="lead">
+      Хранит ключи и ничего больше: ни значений, ни сканов, ни запросов, ни лидера.
+      Одно ограничение, которое упрощает всё остальное.
+    </p>
+
+    <div class="record">
+      <code>{key, lamport, node, alive?, wall}</code>
+      <p>Вот и вся запись. Места для значения в ней нет — поэтому слияние двух реплик
+         сводится к сравнению двух чисел.</p>
+    </div>
+
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/holooloo/kurwadb">Репозиторий</a>
+      <a class="btn" href="https://github.com/holooloo/kurwadb/blob/feat/keyonly-core/docs/adr/0001-key-only-distributed-set.md">ADR</a>
+      <a class="btn" href="https://github.com/holooloo/kurwadb/blob/feat/keyonly-core/ARCHITECTURE.md">Архитектура</a>
+    </div>
+  </header>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">API</span></div>
+    <div class="col">
+      <h2>Четыре операции, и всё</h2>
+<pre><span class="k">Kurwa</span>.add(<span class="c">"order:1029"</span>)      <span class="c">#=> :ok</span>
+<span class="k">Kurwa</span>.member?(<span class="c">"order:1029"</span>)  <span class="c">#=> true</span>
+<span class="k">Kurwa</span>.delete(<span class="c">"order:1029"</span>)   <span class="c">#=> :ok</span>
+<span class="k">Kurwa</span>.count()                   <span class="c">#=> {:ok, %{approximate: 1, ...}}</span></pre>
+      <p>Плюс именованные множества и алгебра над ними:
+        <code>member_any?(["blacklist", "greylist"], key)</code>.</p>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Почему</span></div>
+    <div class="col">
+      <h2>Цепочка следствий</h2>
+      <ol class="chain">
+        <li>У ключа <strong>нет содержимого</strong>.</li>
+        <li>Две конкурентные записи не могут разойтись ни в чём, кроме факта существования.</li>
+        <li>Слияние реплик = сравнение <code>{lamport, node}</code>. Полный порядок.</li>
+        <li>Значит, не нужны vector clocks, siblings и merge-функции в приложении.</li>
+        <li>И не нужен лидер: любая нода обслуживает любой ключ.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Что даёт</span></div>
+    <div class="col">
+      <h2>Шесть свойств, за которые всё это затевалось</h2>
+      <dl class="specs">
+        <div class="spec">
+          <dt>Нет лидера</dt>
+          <dd>Нечего выбирать, нет паузы на failover. Потеря ноды забирает ёмкость, а не доступность.</dd>
+        </div>
+        <div class="spec">
+          <dt>Самолечение</dt>
+          <dd>Упавшая нода не выпадает из кольца: пропущенные записи копятся и доезжают сами, когда она вернётся. Без оператора.</dd>
+        </div>
+        <div class="spec">
+          <dt>Ошибка ≠ отсутствие</dt>
+          <dd>Недостижимый кворум — это <code>503</code>, никогда не <code>false</code>. Именно здесь врёт дедупликация на кэше.</dd>
+        </div>
+        <div class="spec">
+          <dt>365 нс</dt>
+          <dd>Локальная проверка принадлежности — один <code>:ets.lookup</code> в процессе вызывающего, без переключения контекста.</dd>
+        </div>
+        <div class="spec">
+          <dt>Монтируется</dt>
+          <dd>Ядро не знает про протоколы, поэтому БД отдаётся и по 9P: <code>ls</code>, <code>cat</code>, <code>stat</code> вместо админских ручек.</dd>
+        </div>
+        <div class="spec">
+          <dt>Union бесплатно</dt>
+          <dd>Объединение именованных множеств считается на чтении и ничего не копирует. Это union mount из Plan 9, только для множеств.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Замеры</span></div>
+    <div class="col">
+      <h2>Цифры, а не прилагательные</h2>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th scope="col">Операция</th><th scope="col">Результат</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Локальная проверка принадлежности</td><td class="num">365 нс</td></tr>
+            <tr><td>Запись и чтение через кворум трёх нод</td><td class="num">~47 мкс</td></tr>
+            <tr><td>То же, 64 конкурентных клиента</td><td class="num">54k зап/с · 59k чт/с</td></tr>
+            <tr><td>Память на ключ</td><td class="num">120 Б · 144 Б</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Один ноутбук, три ноды делят процессор, <code>n=3 r=2 w=2</code>.
+         120 байт — при 13-байтном ключе, 144 — при 36-байтном.</p>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Как устроено</span></div>
+    <div class="col">
+      <h2>Схемы</h2>
+      <figure>
+        <div class="plate"><img src="adr/components.svg" alt="Стек компонентов: фронтенды HTTP и 9P над слоем ключей и именованных множеств, кэш Extractor, координатор без лидера с Placement, Quorum и Handoff, и три реплики с ETS и журналом"></div>
+        <figcaption>Стек компонентов. На каждом переходе — замеренная стоимость.</figcaption>
+      </figure>
+      <figure>
+        <div class="plate"><img src="adr/write-path.svg" alt="Диаграмма записи: координатор штампует одну запись, шлёт её двум доступным репликам, отвечает :ok по кворуму и запоминает хинт для недоступной третьей"></div>
+        <figcaption>Запись при одной упавшей реплике — и хинт, который её долечивает.</figcaption>
+      </figure>
+      <figure>
+        <div class="plate"><img src="adr/read-path.svg" alt="Диаграмма чтения: кэш отвечает без сети, промах превращается в один кворумный запрос, ответы сливаются по наибольшему lamport, отставшая реплика чинится"></div>
+        <figcaption>Чтение: кэш, слияние ответов и починка отставшей реплики.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">9P</span></div>
+    <div class="col">
+      <h2>База данных как файловая система</h2>
+      <p><code>stat</code> — это и есть проверка принадлежности, <code>create</code> — добавление,
+         <code>remove</code> — удаление. Не метафора, а та же модель данных.</p>
+<pre>9p -a localhost:564 ls /
+<span class="c">ctl  stats  ring  keys  b64  sets</span>
+
+9p -a localhost:564 read ring
+<span class="c">member kurwa1@10.0.0.1 up
+member kurwa2@10.0.0.2 up
+member kurwa3@10.0.0.3 down</span>
+
+<span class="k">echo</span> compact | 9p -a localhost:564 write ctl</pre>
+      <p>Никакого SDK и вендорского CLI. Каталоги ключей намеренно нелистируемы —
+         сканов в базе нет, а пустой листинг был бы ложью.</p>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Границы</span></div>
+    <div class="col">
+      <h2>Когда не брать</h2>
+      <ul class="limits">
+        <li><b>Одна нода.</b> Redis лучше по всем статьям: проще, быстрее, десять лет в проде, экосистема.</li>
+        <li><b>Допустимы ложные срабатывания и не нужны удаления.</b> Bloom-фильтр съест ~1,2 байта на ключ против наших 120.</li>
+        <li><b>Нужен TTL на ключ.</b> Его пока нет — есть только TTL на надгробия.</li>
+        <li><b>Нужны сканы, листинги, запросы.</b> Их нет намеренно, и это не изменится.</li>
+        <li><b>Ключи не влезают в RAM.</b> ~11 ГБ на 100 млн ключей; дискового движка пока нет.</li>
+        <li><b>Ноль часов в проде.</b> Один автор, нет клиентских библиотек, нет TLS между нодами.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Старт</span></div>
+    <div class="col">
+      <h2>Поднять кластер из трёх нод</h2>
+<pre>git clone https://github.com/holooloo/kurwadb
+<span class="k">cd</span> kurwadb && mix deps.get
+scripts/cluster.sh                 <span class="c"># 4040, 4041, 4042</span>
+
+curl -X PUT localhost:4040/k/order:1029
+curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — прочитали с другой ноды</span></pre>
+    </div>
+  </section>
+
+  <footer>
+    <span>MIT</span>
+    <span>168 тестов + 10 кластерных на трёх реальных нодах</span>
+    <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
+  </footer>
+
+</div>
+
+</body>
+</html>
