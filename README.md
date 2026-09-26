@@ -170,14 +170,26 @@ numbers.
 
 ## Measured
 
+Speed is part of the contract: **a release that is slower than the one before it
+is a broken release.** Every figure below comes from a script in [`bench/`](bench),
+and every version gets a column in [PERFORMANCE.md](PERFORMANCE.md).
+
 One laptop, all three nodes sharing the same CPU.
 
 | | |
 |---|---|
-| local membership check | 365 ns |
+| local membership check | 382 ns |
 | quorum write / read across 3 nodes | ~47 µs single-client latency |
 | the same, 64 concurrent clients | 54k writes/sec, 59k reads/sec |
+| `GET /k/:key` over HTTP, keep-alive | 113k req/sec |
+| `POST /batch`, 100 keys per request | 389k keys/sec |
 | RAM per key | 120 B (13-byte keys), 144 B (36-byte keys) |
+
+```sh
+KURWA_DATA_DIR=tmp/bench mix run bench/local.exs
+MIX_ENV=test mix run --no-start bench/cluster.exs
+bench/http.sh
+```
 
 ## License
 

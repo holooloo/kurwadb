@@ -133,7 +133,7 @@
     text-wrap: pretty;
   }
 
-  .record {
+  .record, .pledge {
     margin-top: clamp(30px, 5vw, 46px);
     padding: 20px 22px;
     border: 1px solid var(--rule);
@@ -144,6 +144,10 @@
   }
   .record code { font-size: clamp(0.85rem, 2.4vw, 1.02rem); font-weight: 500; }
   .record p { margin: 10px 0 0; font-size: 0.95rem; color: var(--muted); }
+  .pledge { margin: 0 0 24px; max-width: 64ch; }
+  .pledge b { font-weight: 600; }
+  .pledge p { margin: 0; }
+  .pledge p + p { margin-top: 8px; font-size: 0.93rem; color: var(--muted); }
 
   .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: clamp(28px, 5vw, 40px); }
   .btn {
@@ -361,7 +365,7 @@
           <dd>Недостижимый кворум — это <code>503</code>, никогда не <code>false</code>. Именно здесь врёт дедупликация на кэше.</dd>
         </div>
         <div class="spec">
-          <dt>365 нс</dt>
+          <dt>382 нс</dt>
           <dd>Локальная проверка принадлежности — один <code>:ets.lookup</code> в процессе вызывающего, без переключения контекста.</dd>
         </div>
         <div class="spec">
@@ -379,22 +383,35 @@
   <section class="row">
     <div class="rail"><span class="eyebrow">Замеры</span></div>
     <div class="col">
-      <h2>Цифры, а не прилагательные</h2>
+      <h2>Скорость — часть контракта</h2>
+
+      <div class="pledge">
+        <p><b>Релиз, который медленнее предыдущего, считается сломанным.</b>
+           Регрессия — это баг релиза, а не новая точка отсчёта.</p>
+        <p>Поэтому каждая цифра ниже получена скриптом из <code>bench/</code> в репозитории,
+           и у каждой версии своя колонка в
+           <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.</p>
+      </div>
+
       <div class="scroll">
         <table>
           <thead>
-            <tr><th scope="col">Операция</th><th scope="col">Результат</th></tr>
+            <tr><th scope="col">Операция</th><th scope="col">0.1.0</th></tr>
           </thead>
           <tbody>
-            <tr><td>Локальная проверка принадлежности</td><td class="num">365 нс</td></tr>
-            <tr><td>Запись и чтение через кворум трёх нод</td><td class="num">~47 мкс</td></tr>
-            <tr><td>То же, 64 конкурентных клиента</td><td class="num">54k зап/с · 59k чт/с</td></tr>
+            <tr><td>Локальная проверка принадлежности</td><td class="num">382 нс</td></tr>
+            <tr><td>Кворум трёх нод, один клиент</td><td class="num">~47 мкс</td></tr>
+            <tr><td>Кворум трёх нод, 64 клиента</td><td class="num">54k зап/с · 59k чт/с</td></tr>
+            <tr><td><code>GET /k/:key</code> по HTTP, keep-alive</td><td class="num">113k зап/с</td></tr>
+            <tr><td><code>POST /batch</code>, 100 ключей в запросе</td><td class="num">389k ключей/с</td></tr>
             <tr><td>Память на ключ</td><td class="num">120 Б · 144 Б</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Один ноутбук, три ноды делят процессор, <code>n=3 r=2 w=2</code>.
-         120 байт — при 13-байтном ключе, 144 — при 36-байтном.</p>
+      <p>Apple M4, 10 ядер; все три ноды делят один процессор, <code>n=3 r=2 w=2</code>.
+         120 байт — при 13-байтном ключе, 144 — при 36-байтном.
+         Переиспользование соединения даёт 19×: без него те же запросы дают 5.9k/с,
+         и это измеряет TCP, а не базу.</p>
     </div>
   </section>
 
