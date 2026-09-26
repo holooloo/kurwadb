@@ -151,6 +151,14 @@ there are tests for a torn tail, a bad CRC and an absurd length. Compaction
 fsyncs the new snapshot and renames it into place *before* the old log is
 dropped, so a crash at any point leaves one consistent pair.
 
+Durability is deliberately a window, not a guarantee, at the node level. An
+accepted write is appended to the log at once, but the fsync is periodic
+(`wal_sync_interval`, 100ms), so a node killed hard comes back missing writes it
+had acknowledged. That is the same bargain Redis makes with `appendfsync
+everysec`, and the reason it is acceptable here is replication: the other
+replicas have the write. `wal_sync_on_write: true` trades an fsync per write for
+closing the window locally. Both behaviours have a cluster test.
+
 Sharding here is only about local write concurrency (`:erlang.phash2`); which
 *node* holds a key is the ring's business. Live keys are counted in an
 `:atomics` counter rather than `:ets.info(:size)`, because the table also holds
@@ -173,6 +181,21 @@ the third replica usually does not answer inside a quorum of 2, and because a
 downed node had been dropped from the preference list entirely so nothing was
 even accumulating for it. Stable placement plus handoff is the fix, and the
 measurement above is the same scenario re-run.
+
+This is now an automated suite (`mix test --include cluster`) rather than a
+manual exercise, and writing it turned up the second hole. A node stopped by
+killing its BEAM came back with *nothing*, not with what it had: the WAL's fsync
+had not fired yet. Which means the two ways a replica falls behind need different
+mechanisms, and only one of them was covered:
+
+| how a replica falls behind | who knows | what fixes it |
+|---|---|---|
+| it was unreachable when the write happened | the coordinator | hinted handoff |
+| it acknowledged the write, then crashed before fsync | **nobody** | read repair only |
+
+The second row is why `wal_sync_on_write` now exists, and why active anti-entropy
+is on the list below: nothing in the system is looking for silent divergence, so
+a crash-lost write on a key nobody reads stays lost on that replica.
 
 ## Plan 9
 
@@ -288,9 +311,12 @@ done properly, PostgreSQL first, point lookups and point writes only, as another
 thin frontend over `Kurwa.Extractor`. The architecture is already ready for it;
 that is the part that matters today.
 
-**An automated multi-node test.** The cluster behaviour above was verified by
-hand with `scripts/cluster.sh`. A `:peer`-based ExUnit test would pin it down, and
-is a real gap in the suite.
+**Active anti-entropy.** Both repair mechanisms are reactive: handoff needs a
+coordinator that noticed, read repair needs someone to read the key. Neither goes
+looking. A background pass that compares replicas - Merkle trees over key ranges,
+the way Riak's AAE works - is what closes the "nobody knows" row in the table
+above. For a key-only store the hash tree is unusually cheap, because the leaves
+are the keys themselves with no values to digest.
 
 **Persistent hints**, and **per-set statistics**, both blocked on the same thing:
 somewhere to put data that is not a key.
