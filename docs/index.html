@@ -16,305 +16,355 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
   :root {
-    /* birch, felled wood, and the river behind the dam */
-    --ground: #faf6ef;
-    --surface: #fffdf9;
-    --sunken: #f3ece0;
-    --ink: #241a12;
-    --muted: #6b5a4a;
-    --faint: #9a8877;
-    --rule: #e8ddcd;
-    --rule-strong: #d2c2aa;
-    --accent: #8a4b1f;
-    --accent-soft: #fbf1e4;
-    --teal: #1f6f7a;
-    --ok: #3f7d20;
-    --ok-soft: #f1f7ec;
-    --down: #b3261e;
-    --down-soft: #fdf2f1;
+    --ground: #fff8ea;
+    --surface: #ffffff;
+    --sunken: #fff1d6;
+    --ink: #2b2118;
+    --muted: #6f6154;
+    --faint: #9c8b7a;
+    --outline: #2b2118;
+    --rule: #ead9bd;
+    --accent: #e2761b;
+    --accent-soft: #ffe8c4;
+    --teal: #16a5c4;
+    --teal-soft: #d2f1f8;
+    --leaf: #57a536;
+    --leaf-soft: #e2f3d7;
+    --sun: #f4bc36;
+    --sun-soft: #fff0c4;
+    --berry: #e2574c;
+    --berry-soft: #ffe0dc;
+    --plum: #8a5fb0;
+    --ok: #3f9a2f;
+    --ok-soft: #e2f3d7;
+    --down: #d8443a;
+    --down-soft: #ffe0dc;
+    --shadow: #2b2118;
+    --fur: #c9752a;
+    --fur-light: #f2c692;
     --plate: #fcfcfb;
-    --fur: #8a4b1f;
-    --fur-light: #d3a678;
     color-scheme: light;
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground: #17120d;
-      --surface: #201810;
-      --sunken: #241b12;
-      --ink: #f4ece0;
-      --muted: #ab9782;
-      --faint: #7f6d5b;
-      --rule: #342a1f;
-      --rule-strong: #47392a;
-      --accent: #e0a05a;
-      --accent-soft: #2a1d10;
-      --teal: #5fc0cd;
-      --ok: #86c06a;
-      --ok-soft: #1a2314;
-      --down: #f0857c;
-      --down-soft: #2a1614;
-      --plate: #fcfcfb;
-      --fur: #b06a33;
-      --fur-light: #d9ab7c;
+      --ground: #2a2018; --surface: #362a1f; --sunken: #413223; --ink: #fdf3e3;
+      --muted: #c3b09a; --faint: #91806e; --outline: #140e08; --rule: #4d3d2c;
+      --accent: #f59a3c; --accent-soft: #46321b; --teal: #4cc8e0; --teal-soft: #16333a;
+      --leaf: #7ec95f; --leaf-soft: #1f3317; --sun: #f7cc5c; --sun-soft: #3d2f12;
+      --berry: #f2776b; --berry-soft: #3d1f1b; --plum: #b48ad6;
+      --ok: #7ec95f; --ok-soft: #1f3317; --down: #f2776b; --down-soft: #3d1f1b;
+      --shadow: #140e08; --fur: #d98b3f; --fur-light: #f3cb9b; --plate: #fcfcfb;
       color-scheme: dark;
     }
   }
 
   :root[data-theme="dark"] {
-    --ground: #17120d; --surface: #201810; --sunken: #241b12; --ink: #f4ece0;
-    --muted: #ab9782; --faint: #7f6d5b; --rule: #342a1f; --rule-strong: #47392a;
-    --accent: #e0a05a; --accent-soft: #2a1d10; --teal: #5fc0cd;
-    --ok: #86c06a; --ok-soft: #1a2314; --down: #f0857c; --down-soft: #2a1614;
-    --plate: #fcfcfb; --fur: #b06a33; --fur-light: #d9ab7c; color-scheme: dark;
+    --ground: #2a2018; --surface: #362a1f; --sunken: #413223; --ink: #fdf3e3;
+    --muted: #c3b09a; --faint: #91806e; --outline: #140e08; --rule: #4d3d2c;
+    --accent: #f59a3c; --accent-soft: #46321b; --teal: #4cc8e0; --teal-soft: #16333a;
+    --leaf: #7ec95f; --leaf-soft: #1f3317; --sun: #f7cc5c; --sun-soft: #3d2f12;
+    --berry: #f2776b; --berry-soft: #3d1f1b; --plum: #b48ad6;
+    --ok: #7ec95f; --ok-soft: #1f3317; --down: #f2776b; --down-soft: #3d1f1b;
+    --shadow: #140e08; --fur: #d98b3f; --fur-light: #f3cb9b; --plate: #fcfcfb;
+    color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust: 100%; }
 
   body {
-    margin: 0;
-    background: var(--ground);
-    color: var(--ink);
+    margin: 0; background: var(--ground); color: var(--ink);
     font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-size: 17px;
-    line-height: 1.62;
-    -webkit-font-smoothing: antialiased;
+    font-size: 17px; line-height: 1.62; -webkit-font-smoothing: antialiased;
   }
 
   .wrap { max-width: 1060px; margin: 0 auto; padding-inline: clamp(20px, 5vw, 56px); }
 
-  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
-  a:hover { text-decoration-thickness: 2px; }
-  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+  a { color: var(--accent); font-weight: 500; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+  :focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; border-radius: 6px; }
 
   code, pre, .mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
 
   .eyebrow {
-    font-family: "IBM Plex Mono", ui-monospace, monospace;
-    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint);
+    font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 0.72rem;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+  }
+  .polish {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; font-weight: 500;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--surface);
+    background: var(--accent); border: 2px solid var(--outline); border-radius: 999px;
+    padding: 2px 10px; box-shadow: 2px 2px 0 var(--shadow);
+  }
+
+  /* cartoon card: thick outline, hard sticker shadow */
+  .card, .ring-card, .dam-card, .sim, .rec, .pledge, .plate {
+    background: var(--surface); border: 2.5px solid var(--outline);
+    border-radius: 16px; box-shadow: 5px 5px 0 var(--shadow);
   }
 
   /* ------------------------------------------------------------------ hero */
-  header.hero { padding-block: clamp(48px, 9vw, 88px) clamp(36px, 6vw, 64px); }
+  header.hero { padding-block: clamp(40px, 8vw, 76px) clamp(30px, 5vw, 54px); }
+  .wordmark { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: clamp(24px, 4vw, 42px); }
+  .wordmark b { font-family: "IBM Plex Mono", monospace; font-size: 1.15rem; font-weight: 600; }
 
-  .wordmark {
-    display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-    margin-bottom: clamp(28px, 5vw, 48px);
-  }
-  .wordmark b { font-family: "IBM Plex Mono", monospace; font-size: 1.05rem; font-weight: 500; }
-
-  .hero-grid { display: grid; gap: clamp(32px, 5vw, 56px); align-items: center; }
+  .hero-grid { display: grid; gap: clamp(28px, 5vw, 52px); align-items: center; }
   @media (min-width: 900px) { .hero-grid { grid-template-columns: minmax(0, 1fr) 340px; } }
 
   h1 {
-    margin: 0;
-    font-size: clamp(2.5rem, 7vw, 4.3rem);
-    font-weight: 600; letter-spacing: -0.035em; line-height: 1.03; text-wrap: balance;
+    margin: 0; font-size: clamp(2.5rem, 7vw, 4.3rem); font-weight: 700;
+    letter-spacing: -0.035em; line-height: 1.02; text-wrap: balance;
   }
+  h1 em { font-style: normal; color: var(--accent); }
 
   .lead {
-    margin: clamp(18px, 3vw, 26px) 0 0; max-width: 46ch;
-    font-size: clamp(1.05rem, 2vw, 1.24rem); color: var(--muted); text-wrap: pretty;
+    margin: clamp(16px, 3vw, 24px) 0 0; max-width: 46ch;
+    font-size: clamp(1.05rem, 2vw, 1.22rem); color: var(--muted); text-wrap: pretty;
   }
 
-  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: clamp(24px, 4vw, 34px); }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: clamp(22px, 4vw, 32px); }
   .btn {
-    display: inline-block; padding: 11px 20px;
-    border: 1px solid var(--rule-strong); border-radius: 3px;
-    font-size: 0.94rem; font-weight: 500; text-decoration: none;
-    color: var(--ink); background: var(--surface);
-    transition: border-color 0.15s ease, transform 0.15s ease;
+    display: inline-block; padding: 11px 20px; font-size: 0.94rem; font-weight: 600;
+    text-decoration: none; color: var(--ink); background: var(--surface);
+    border: 2.5px solid var(--outline); border-radius: 12px; box-shadow: 4px 4px 0 var(--shadow);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
   }
-  .btn:hover { border-color: var(--accent); transform: translateY(-1px); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--ground); }
+  .btn:hover { transform: translate(-1px, -1px); box-shadow: 6px 6px 0 var(--shadow); }
+  .btn:active { transform: translate(3px, 3px); box-shadow: 1px 1px 0 var(--shadow); }
+  .btn.primary { background: var(--sun); }
 
-  /* ------------------------------------------------------------- ring */
-  .ring-card {
-    background: var(--surface); border: 1px solid var(--rule); border-radius: 4px;
-    padding: 14px 14px 10px;
-  }
+  /* ------------------------------------------------------------------ ring */
+  .ring-card { padding: 14px 14px 10px; }
   .ring-card svg { display: block; width: 100%; height: auto; }
-  .ring-card figcaption { margin-top: 6px; font-size: 0.8rem; color: var(--faint); text-align: center; }
+  .ring-card figcaption { margin-top: 6px; font-size: 0.78rem; color: var(--muted); text-align: center; }
 
-  .ring-track { fill: none; stroke: var(--rule-strong); stroke-width: 1.5; }
-  .ring-node circle { fill: var(--surface); stroke: var(--teal); stroke-width: 2; }
-  .ring-node text { fill: var(--teal); font-size: 11px; font-weight: 600; text-anchor: middle; }
-  .ring-vnode { fill: var(--rule-strong); }
-  .key-dot { fill: var(--accent); }
-  .key-link { stroke: var(--accent); stroke-width: 1.4; fill: none; opacity: 0.55; }
-  .key-halo { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: 0.5; }
+  .ring-track { fill: none; stroke: var(--outline); stroke-width: 2.5; stroke-dasharray: 2 7; stroke-linecap: round; opacity: 0.55; }
+  .ring-node circle { stroke: var(--outline); stroke-width: 2.5; }
+  .ring-node.n-a circle { fill: var(--teal); }
+  .ring-node.n-b circle { fill: var(--leaf); }
+  .ring-node.n-c circle { fill: var(--sun); }
+  .ring-node text { fill: var(--outline); font-size: 12px; font-weight: 700; text-anchor: middle; }
+  .ring-vnode { fill: var(--accent); }
+  .key-dot { fill: var(--berry); stroke: var(--outline); stroke-width: 1.5; }
+  .key-link { stroke: var(--accent); stroke-width: 2.5; fill: none; stroke-linecap: round; opacity: 0.85; }
+  .key-halo { fill: none; stroke: var(--berry); stroke-width: 2.5; opacity: 0.6; }
 
   @keyframes key-in { from { opacity: 0; transform: scale(0.2); } to { opacity: 1; transform: scale(1); } }
   @keyframes key-out { to { opacity: 0; } }
-  @keyframes halo { from { r: 4; opacity: 0.55; } to { r: 18; opacity: 0; } }
+  @keyframes halo { from { r: 5; opacity: 0.6; } to { r: 22; opacity: 0; } }
   @keyframes draw { from { stroke-dashoffset: var(--len); } to { stroke-dashoffset: 0; } }
-
   .key-group { animation: key-in 0.3s ease both, key-out 0.5s ease 2.2s both; }
   .key-group .key-halo { animation: halo 1.1s ease-out both; }
   .key-group .key-link { stroke-dasharray: var(--len); animation: draw 0.45s ease-out 0.12s both; }
 
-  /* ---------------------------------------------------------------- bobr */
+  /* ------------------------------------------------------------------ bobr */
+  .bobr .fur, .bobr .muzzle, .bobr .nose, .bobr .teeth, .bobr .fur-in {
+    stroke: var(--outline); stroke-width: 3; stroke-linejoin: round;
+  }
   .bobr .fur { fill: var(--fur); }
   .bobr .fur-in { fill: var(--fur-light); }
   .bobr .muzzle { fill: var(--fur-light); }
-  .bobr .eye, .bobr .nose { fill: var(--ink); }
-  .bobr .glint { fill: var(--surface); }
-  .bobr .teeth { fill: #fffdf5; stroke: var(--rule-strong); stroke-width: 1; }
-  .bobr .split { stroke: var(--rule-strong); stroke-width: 1; }
-  .bobr-mark { width: 26px; height: 26px; display: block; flex: none; }
-  .bobr-disc { fill: var(--surface); }
+  .bobr .eye, .bobr .nose { fill: var(--outline); }
+  .bobr .glint { fill: #fff; }
+  .bobr .cheek { fill: var(--berry); opacity: 0.45; }
+  .bobr .teeth { fill: #fffdf5; }
+  .bobr .split { stroke: var(--outline); stroke-width: 2; }
+  .bobr-mark { width: 34px; height: 34px; display: block; flex: none; }
+  .bobr-disc { fill: var(--sun-soft); stroke: var(--outline); stroke-width: 2.5; }
 
-  /* the tail-slap: beavers warn each other by smacking the water */
   @keyframes slap {
-    0%, 88%, 100% { transform: rotate(0deg); }
-    92% { transform: rotate(-7deg); }
-    96% { transform: rotate(5deg); }
+    0%, 86%, 100% { transform: rotate(0deg); }
+    90% { transform: rotate(-8deg); }
+    95% { transform: rotate(6deg); }
   }
   #ring .bobr { transform-origin: 160px 160px; animation: slap 9s ease-in-out infinite; }
 
-  .polish {
-    font-family: "IBM Plex Mono", monospace; font-size: 0.72rem;
-    letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+  /* ------------------------------------------------------------------- dam */
+  .dam-card { padding: 14px 14px 8px; margin-bottom: 22px; }
+  .dam-card svg { display: block; width: 100%; height: auto; }
+  .dam-stats {
+    display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 6px 4px 4px;
+    font-family: "IBM Plex Mono", monospace; font-size: 0.76rem; color: var(--muted);
   }
+  .dam-stats b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .dam-stats .blocked b { color: var(--berry); }
 
-  /* --------------------------------------------------------------- sections */
+  .river { fill: var(--teal); opacity: 0.18; }
+  .log { fill: var(--fur); stroke: var(--outline); stroke-width: 2.5; }
+  .log.alt { fill: var(--accent); }
+  .log-end { fill: var(--fur-light); stroke: var(--outline); stroke-width: 2; }
+  .chip-body { fill: var(--surface); stroke: var(--outline); stroke-width: 2; }
+  .chip-body.fresh { fill: var(--leaf-soft); }
+  .chip-body.dupe { fill: var(--berry-soft); }
+  .chip-text { font-family: "IBM Plex Mono", monospace; font-size: 9px; fill: var(--ink); }
+  .chip-mark { font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 700; }
+  .chip-mark.dupe { fill: var(--berry); }
+  .chip-mark.fresh { fill: var(--ok); }
+
+  @keyframes flow-pass { from { transform: translateX(0); } to { transform: translateX(520px); } }
+  @keyframes flow-block {
+    0% { transform: translateX(0); opacity: 1; }
+    58% { transform: translateX(210px); opacity: 1; }
+    72% { transform: translateX(196px); opacity: 1; }
+    100% { transform: translateX(196px); opacity: 0; }
+  }
+  .flow-pass { animation: flow-pass 4.2s linear both; }
+  .flow-block { animation: flow-block 4.2s ease-out both; }
+
+  /* -------------------------------------------------------------- sections */
   .row {
     display: grid; grid-template-columns: 1fr; gap: 10px 40px;
-    padding-block: clamp(36px, 5.5vw, 58px); border-top: 1px solid var(--rule);
+    padding-block: clamp(34px, 5vw, 54px); border-top: 2.5px solid var(--outline);
   }
   @media (min-width: 860px) {
-    .row { grid-template-columns: 148px minmax(0, 1fr); gap: 0 48px; }
+    .row { grid-template-columns: 158px minmax(0, 1fr); gap: 0 48px; }
     .rail { padding-top: 6px; }
   }
+  .rail .eyebrow { color: var(--ink); font-weight: 500; }
+  .rail .eyebrow::before {
+    content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+    background: var(--dot, var(--accent)); border: 2px solid var(--outline);
+    margin-right: 8px; vertical-align: 0;
+  }
+  .row:nth-of-type(6n + 1) { --dot: var(--teal); }
+  .row:nth-of-type(6n + 2) { --dot: var(--leaf); }
+  .row:nth-of-type(6n + 3) { --dot: var(--sun); }
+  .row:nth-of-type(6n + 4) { --dot: var(--berry); }
+  .row:nth-of-type(6n + 5) { --dot: var(--plum); }
+  .row:nth-of-type(6n + 6) { --dot: var(--accent); }
+
   .col { min-width: 0; }
   .col > :first-child { margin-top: 0; }
   .col > :last-child { margin-bottom: 0; }
 
   h2 {
-    margin: 0 0 18px; font-size: clamp(1.3rem, 2.5vw, 1.58rem);
-    font-weight: 600; letter-spacing: -0.018em; text-wrap: balance;
+    margin: 0 0 18px; font-size: clamp(1.35rem, 2.6vw, 1.7rem);
+    font-weight: 700; letter-spacing: -0.02em; text-wrap: balance;
   }
   p { max-width: 66ch; text-wrap: pretty; }
 
-  /* ------------------------------------------------------------ record diff */
-  .records { display: grid; gap: 14px; max-width: 62ch; }
+  /* --------------------------------------------------------------- record */
+  .records { display: grid; gap: 16px; max-width: 64ch; }
   @media (min-width: 620px) { .records { grid-template-columns: 1fr 1fr; } }
-  .rec {
-    border: 1px solid var(--rule); border-radius: 3px; padding: 14px 16px; background: var(--surface);
-  }
-  .rec.ours { border-left: 3px solid var(--accent); }
+  .rec { padding: 16px 18px; }
+  .rec.ours { background: var(--accent-soft); }
   .rec .eyebrow { display: block; margin-bottom: 8px; }
-  .rec code { font-size: 0.82rem; display: block; line-height: 1.75; }
-  .rec .gone { color: var(--faint); text-decoration: line-through; }
+  .rec code { font-size: 0.8rem; display: block; line-height: 1.75; }
+  .rec .gone { color: var(--faint); text-decoration: line-through; text-decoration-color: var(--berry); text-decoration-thickness: 2px; }
   .rec p { margin: 10px 0 0; font-size: 0.88rem; color: var(--muted); }
 
-  /* ------------------------------------------------------------- simulator */
-  .sim { border: 1px solid var(--rule); border-radius: 4px; background: var(--surface); overflow: hidden; }
+  /* ------------------------------------------------------------ simulator */
+  .sim { overflow: hidden; }
   .sim-head {
     display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between;
-    padding: 12px 16px; border-bottom: 1px solid var(--rule); background: var(--sunken);
+    padding: 12px 16px; border-bottom: 2.5px solid var(--outline); background: var(--sunken);
   }
-  .sim-head .eyebrow { margin: 0; }
   .sim-controls { display: flex; gap: 8px; flex-wrap: wrap; }
   .sim-btn {
-    font: inherit; font-size: 0.82rem; padding: 6px 12px; cursor: pointer;
+    font: inherit; font-size: 0.82rem; font-weight: 600; padding: 6px 13px; cursor: pointer;
     background: var(--surface); color: var(--ink);
-    border: 1px solid var(--rule-strong); border-radius: 3px;
+    border: 2px solid var(--outline); border-radius: 10px; box-shadow: 3px 3px 0 var(--shadow);
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
   }
-  .sim-btn:hover { border-color: var(--accent); }
+  .sim-btn:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--shadow); }
+  .sim-btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow); }
 
-  .sim-nodes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--rule); }
+  .sim-nodes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
   .node-btn {
     font: inherit; text-align: left; cursor: pointer; padding: 14px 16px 16px;
-    background: var(--surface); color: var(--ink); border: 0; border-top: 3px solid var(--teal);
+    background: var(--surface); color: var(--ink); border: 0;
+    border-top: 7px solid var(--leaf); border-right: 2.5px solid var(--outline);
     transition: background 0.2s ease;
   }
+  .sim-nodes .node-btn:last-child { border-right: 0; }
   .node-btn:hover { background: var(--sunken); }
-  .node-btn[data-up="false"] { border-top-color: var(--down); background: var(--down-soft); }
-  .node-name { font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; font-weight: 500; }
-  .node-state { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--teal); }
+  .node-btn[data-up="false"] { border-top-color: var(--berry); background: var(--berry-soft); }
+  .node-name { font-family: "IBM Plex Mono", monospace; font-size: 0.88rem; font-weight: 600; }
+  .node-state { font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ok); font-weight: 600; }
   .node-btn[data-up="false"] .node-state { color: var(--down); }
   .stat { display: flex; justify-content: space-between; gap: 8px; font-size: 0.8rem; margin-top: 8px; }
   .stat span:first-child { color: var(--muted); }
-  .stat span:last-child { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; }
-  .stat.hinted span:last-child { color: var(--accent); font-weight: 500; }
+  .stat span:last-child { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stat.hinted span:last-child { color: var(--accent); }
 
-  .bar { height: 4px; background: var(--rule); border-radius: 2px; overflow: hidden; margin-top: 10px; }
-  .bar > i { display: block; height: 100%; background: var(--teal); transition: width 0.35s ease; }
-  .node-btn[data-up="false"] .bar > i { background: var(--down); }
+  .bar { height: 9px; background: var(--sunken); border: 2px solid var(--outline); border-radius: 999px; overflow: hidden; margin-top: 10px; }
+  .bar > i { display: block; height: 100%; background: var(--leaf); transition: width 0.35s ease; }
+  .node-btn[data-up="false"] .bar > i { background: var(--berry); }
 
-  .sim-foot { padding: 12px 16px; border-top: 1px solid var(--rule); font-size: 0.86rem; }
-  .verdict { font-family: "IBM Plex Mono", monospace; font-size: 0.84rem; }
+  .sim-foot { padding: 12px 16px; border-top: 2.5px solid var(--outline); font-size: 0.86rem; background: var(--sunken); }
+  .verdict { font-family: "IBM Plex Mono", monospace; font-size: 0.84rem; font-weight: 500; }
   .verdict.ok { color: var(--ok); }
   .verdict.warn { color: var(--accent); }
   .verdict.bad { color: var(--down); }
-  .sim-note { margin: 10px 0 0; font-size: 0.8rem; color: var(--faint); max-width: none; }
+  .sim-note { margin: 10px 0 0; font-size: 0.78rem; color: var(--muted); max-width: none; }
 
-  /* ---------------------------------------------------------------- pieces */
+  /* ---------------------------------------------------------------- lists */
   .chain { list-style: none; margin: 0; padding: 0; max-width: 62ch; }
-  .chain li { position: relative; padding: 13px 0 13px 40px; border-bottom: 1px dashed var(--rule); }
+  .chain li { position: relative; padding: 13px 0 13px 42px; border-bottom: 2px dashed var(--rule); }
   .chain li:last-child { border-bottom: 0; padding-bottom: 0; }
   .chain li::before {
-    content: "↓"; position: absolute; left: 8px; top: 13px;
-    color: var(--accent); font-family: "IBM Plex Mono", monospace;
+    content: "↓"; position: absolute; left: 8px; top: 12px; width: 22px; height: 22px;
+    line-height: 19px; text-align: center; font-weight: 700;
+    color: var(--outline); background: var(--sun); border: 2px solid var(--outline); border-radius: 50%;
+    font-family: "IBM Plex Mono", monospace; font-size: 12px;
   }
-  .chain li:first-child::before { content: "·"; }
+  .chain li:first-child::before { content: "1"; background: var(--teal-soft); }
 
-  .specs { display: grid; gap: 2px; }
-  .spec { display: grid; gap: 2px 26px; padding: 15px 0; border-bottom: 1px solid var(--rule); }
+  .specs { display: grid; gap: 0; }
+  .spec { display: grid; gap: 2px 26px; padding: 15px 0; border-bottom: 2px dashed var(--rule); }
   .spec:last-child { border-bottom: 0; }
-  @media (min-width: 680px) { .spec { grid-template-columns: 190px minmax(0, 1fr); align-items: baseline; } }
-  .spec dt {
-    font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--accent);
-  }
+  @media (min-width: 680px) { .spec { grid-template-columns: 200px minmax(0, 1fr); align-items: baseline; } }
+  .spec dt { font-family: "IBM Plex Mono", monospace; font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 500; }
+  .spec:nth-child(6n + 1) dt { color: var(--teal); }
+  .spec:nth-child(6n + 2) dt { color: var(--leaf); }
+  .spec:nth-child(6n + 3) dt { color: var(--accent); }
+  .spec:nth-child(6n + 4) dt { color: var(--berry); }
+  .spec:nth-child(6n + 5) dt { color: var(--plum); }
+  .spec:nth-child(6n + 6) dt { color: var(--teal); }
   .spec dd { margin: 0; }
 
+  .limits { list-style: none; margin: 0; padding: 0; max-width: 64ch; }
+  .limits li { padding: 12px 0 12px 30px; border-bottom: 2px dashed var(--rule); position: relative; }
+  .limits li::before { content: "✕"; position: absolute; left: 4px; top: 12px; color: var(--berry); font-weight: 700; }
+  .limits li:last-child { border-bottom: 0; }
+
+  /* --------------------------------------------------------------- tables */
   .scroll { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
-  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 1px solid var(--rule); }
-  th { font-weight: 500; color: var(--muted); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; }
-  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  th, td { text-align: left; padding: 11px 16px 11px 0; border-bottom: 2px dashed var(--rule); }
+  th { font-weight: 600; color: var(--muted); font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; color: var(--accent); }
   tbody tr:last-child td { border-bottom: 0; }
 
   pre {
     margin: 0; padding: 18px 20px; background: var(--sunken);
-    border: 1px solid var(--rule); border-radius: 3px;
+    border: 2.5px solid var(--outline); border-radius: 14px;
     overflow-x: auto; font-size: 0.875rem; line-height: 1.7;
   }
-  pre .c { color: var(--faint); }
-  pre .k { color: var(--teal); }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--teal); font-weight: 500; }
 
-  .pledge {
-    border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 3px;
-    background: var(--surface); padding: 16px 18px; margin: 0 0 24px; max-width: 64ch;
-  }
+  .pledge { padding: 16px 18px; margin: 0 0 24px; max-width: 64ch; background: var(--sun-soft); }
   .pledge p { margin: 0; }
   .pledge p + p { margin-top: 8px; font-size: 0.9rem; color: var(--muted); }
 
   figure { margin: 0 0 26px; }
   figure:last-of-type { margin-bottom: 0; }
-  .plate {
-    background: var(--plate); border: 1px solid var(--rule-strong);
-    border-radius: 3px; padding: 10px; overflow-x: auto;
-  }
+  .plate { padding: 10px; overflow-x: auto; background: var(--plate); }
   .plate img { display: block; width: 100%; min-width: 620px; max-width: 100%; height: auto; }
   figcaption { margin-top: 9px; font-size: 0.86rem; color: var(--muted); }
 
-  .limits { list-style: none; margin: 0; padding: 0; max-width: 64ch; }
-  .limits li { padding: 12px 0; border-bottom: 1px solid var(--rule); }
-  .limits li:last-child { border-bottom: 0; }
-
   footer {
-    border-top: 1px solid var(--rule); padding-block: 32px 56px;
-    display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: baseline;
+    border-top: 2.5px solid var(--outline); padding-block: 30px 56px;
+    display: flex; flex-wrap: wrap; gap: 10px 24px; align-items: center;
     font-size: 0.9rem; color: var(--muted);
   }
 
   @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important; animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+    }
   }
 </style>
 </head>
@@ -332,7 +382,9 @@
         <ellipse class="muzzle" cx="60" cy="81" rx="29" ry="21"></ellipse>
         <circle class="eye" cx="45" cy="56" r="5"></circle>
         <circle class="eye" cx="75" cy="56" r="5"></circle>
-        <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
+        <circle class="cheek" cx="30" cy="76" r="8"></circle>
+              <circle class="cheek" cx="90" cy="76" r="8"></circle>
+              <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
         <rect class="teeth" x="49" y="76" width="22" height="26" rx="4"></rect>
         <line class="split" x1="60" y1="77" x2="60" y2="101"></line>
       </svg>
@@ -343,7 +395,7 @@
 
     <div class="hero-grid">
       <div>
-        <h1>A key is its own payload</h1>
+        <h1>A key is its <em>own payload</em></h1>
         <p class="lead">
           Keys and nothing else. No values, no scans, no queries, no leader —
           one constraint, and everything downstream of it gets simpler.
@@ -381,21 +433,95 @@
               <circle class="eye" cx="75" cy="56" r="5"></circle>
               <circle class="glint" cx="46.7" cy="54.3" r="1.6"></circle>
               <circle class="glint" cx="76.7" cy="54.3" r="1.6"></circle>
+              <circle class="cheek" cx="30" cy="76" r="8"></circle>
+              <circle class="cheek" cx="90" cy="76" r="8"></circle>
               <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
               <rect class="teeth" x="49" y="76" width="22" height="26" rx="4"></rect>
               <line class="split" x1="60" y1="77" x2="60" y2="101"></line>
             </g>
           </g>
           <g id="ring-nodes">
-            <g class="ring-node"><circle cx="160" cy="40" r="15"></circle><text x="160" y="44">A</text></g>
-            <g class="ring-node"><circle cx="263.9" cy="220" r="15"></circle><text x="263.9" y="224">B</text></g>
-            <g class="ring-node"><circle cx="56.1" cy="220" r="15"></circle><text x="56.1" y="224">C</text></g>
+            <g class="ring-node n-a"><circle cx="160" cy="40" r="16"></circle><text x="160" y="45">A</text></g>
+            <g class="ring-node n-b"><circle cx="263.9" cy="220" r="16"></circle><text x="263.9" y="225">B</text></g>
+            <g class="ring-node n-c"><circle cx="56.1" cy="220" r="16"></circle><text x="56.1" y="225">C</text></g>
           </g>
         </svg>
         <figcaption>keys landing on the ring, lighting the three replicas that own them</figcaption>
       </figure>
     </div>
   </header>
+
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">What it is for</span></div>
+    <div class="col">
+      <h2>Holding back the things you have already seen</h2>
+      <p>Every job this store is good at is the same job: a flood arrives, and only
+         the ones you have not seen before should get through. That is a dam built
+         out of keys.</p>
+
+      <div class="dam-card">
+        <svg id="dam" viewBox="0 0 640 170" role="img"
+             aria-label="Events flow from the left towards a dam built of logs. Keys seen before are stopped; first-time keys pass through.">
+          <rect class="river" x="0" y="34" width="300" height="104" rx="6"></rect>
+          <g id="dam-logs">
+            <rect class="log" x="292" y="26" width="56" height="15" rx="7.5"></rect>
+            <rect class="log alt" x="286" y="45" width="68" height="15" rx="7.5"></rect>
+            <rect class="log" x="294" y="64" width="52" height="15" rx="7.5"></rect>
+            <rect class="log alt" x="284" y="83" width="72" height="15" rx="7.5"></rect>
+            <rect class="log" x="292" y="102" width="56" height="15" rx="7.5"></rect>
+            <rect class="log alt" x="288" y="121" width="64" height="15" rx="7.5"></rect>
+            <circle class="log-end" cx="299" cy="33.5" r="4"></circle>
+            <circle class="log-end" cx="293" cy="52.5" r="4"></circle>
+            <circle class="log-end" cx="301" cy="71.5" r="4"></circle>
+            <circle class="log-end" cx="291" cy="90.5" r="4"></circle>
+            <circle class="log-end" cx="299" cy="109.5" r="4"></circle>
+            <circle class="log-end" cx="295" cy="128.5" r="4"></circle>
+          </g>
+          <text x="320" y="158" class="chip-text" text-anchor="middle" fill="currentColor" opacity="0.45">the set</text>
+          <g id="dam-flow">
+            <g transform="translate(14 44)"><g>
+              <rect class="chip-body fresh" x="0" y="0" width="86" height="20" rx="10"></rect>
+              <text class="chip-text" x="10" y="14">order:1029</text>
+            </g></g>
+            <g transform="translate(120 92)"><g>
+              <rect class="chip-body dupe" x="0" y="0" width="86" height="20" rx="10"></rect>
+              <text class="chip-text" x="10" y="14">order:1017</text>
+              <text class="chip-mark dupe" x="96" y="14">✕</text>
+            </g></g>
+            <g transform="translate(452 60)"><g>
+              <rect class="chip-body fresh" x="0" y="0" width="86" height="20" rx="10"></rect>
+              <text class="chip-text" x="10" y="14">order:1031</text>
+            </g></g>
+          </g>
+        </svg>
+        <div class="dam-stats">
+          <span>arrived <b id="dam-in">128</b></span>
+          <span class="blocked">already seen <b id="dam-blocked">41</b></span>
+          <span>passed <b id="dam-out">87</b></span>
+        </div>
+      </div>
+
+      <dl class="specs">
+        <div class="spec">
+          <dt>Deduplication</dt>
+          <dd>A message bus redelivers. Ask the set whether this event id has been handled, once, from any consumer on any node.</dd>
+        </div>
+        <div class="spec">
+          <dt>Idempotency keys</dt>
+          <dd>The client retried the payment. The second attempt has to find its own key already there — and if the store cannot tell you, it must say so rather than guess.</dd>
+        </div>
+        <div class="spec">
+          <dt>Rate limits</dt>
+          <dd>One key per caller per window, with a TTL the size of the window. The key deletes itself when the window closes.</dd>
+        </div>
+        <div class="spec">
+          <dt>Blocklists and frontiers</dt>
+          <dd>Blocked addresses, revoked tokens, URLs the crawler has already fetched. Membership is the whole question.</dd>
+        </div>
+      </dl>
+    </div>
+  </section>
 
   <section class="row">
     <div class="rail"><span class="eyebrow">The record</span></div>
