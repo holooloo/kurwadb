@@ -7,6 +7,8 @@ Kurwa.add("order:1029")      #=> :ok
 Kurwa.member?("order:1029")  #=> true
 Kurwa.delete("order:1029")   #=> :ok
 Kurwa.member?("order:1029")  #=> false
+
+Kurwa.add("seen:event:88", ttl: :timer.minutes(10))
 ```
 
 There are no values, no scans, no queries, no indexes. Every operation names
@@ -68,10 +70,10 @@ curl      localhost:4040/info
 
 | | |
 |---|---|
-| `PUT /k/:key` | add the key |
+| `PUT /k/:key` | add the key; `?ttl=<seconds>` or `?ttl_ms=<ms>` to make it expire |
 | `GET /k/:key` | `200` if a member, `404` if not, `503` if we could not find out |
 | `DELETE /k/:key` | remove the key |
-| `POST /batch` | `{"op":"add"\|"member"\|"delete","keys":[...]}`, up to 1000 keys |
+| `POST /batch` | `{"op":"add"\|"member"\|"delete","keys":[...],"ttl":<seconds>}`, up to 1000 keys |
 | `PUT GET DELETE /sets/:set/k/:key` | the same three, in a named set |
 | `GET /union/k/:key?sets=a,b` | member of **any** of these sets |
 | `GET /intersection/k/:key?sets=a,b` | member of **all** of these sets |
@@ -178,12 +180,12 @@ One laptop, all three nodes sharing the same CPU.
 
 | | |
 |---|---|
-| local membership check | 382 ns |
+| local membership check | 361 ns |
 | quorum write / read across 3 nodes | ~47 µs single-client latency |
 | the same, 64 concurrent clients | 54k writes/sec, 59k reads/sec |
-| `GET /k/:key` over HTTP, keep-alive | 113k req/sec |
-| `POST /batch`, 100 keys per request | 389k keys/sec |
-| RAM per key | 120 B (13-byte keys), 144 B (36-byte keys) |
+| `GET /k/:key` over HTTP, keep-alive | 126k req/sec |
+| `POST /batch`, 100 keys per request | 408k keys/sec |
+| RAM per key | 128 B (13-byte keys), 152 B (36-byte keys) |
 
 ```sh
 KURWA_DATA_DIR=tmp/bench mix run bench/local.exs

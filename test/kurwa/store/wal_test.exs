@@ -40,7 +40,7 @@ defmodule Kurwa.Store.WalTest do
     {:ok, wal} = Wal.append(wal, record("b", lamport: 2))
     :ok = Wal.close(wal)
 
-    assert {:ok, keys, 2} = Wal.replay(dir, [], fn {key, _, _, _, _}, acc -> acc ++ [key] end)
+    assert {:ok, keys, 2} = Wal.replay(dir, [], fn {key, _, _, _, _, _}, acc -> acc ++ [key] end)
     assert keys == ["a", "b"]
   end
 
@@ -75,7 +75,7 @@ defmodule Kurwa.Store.WalTest do
     :ok = Wal.close(wal)
 
     assert {:ok, seen, 1} = Wal.replay(dir, [], fn rec, acc -> acc ++ [rec] end)
-    assert Enum.map(seen, fn {_, lamport, _, _, _} -> lamport end) == [1, 2]
+    assert Enum.map(seen, fn {_, lamport, _, _, _, _} -> lamport end) == [1, 2]
   end
 
   test "a torn tail ends the replay without losing earlier entries", %{dir: dir} do
@@ -89,7 +89,7 @@ defmodule Kurwa.Store.WalTest do
 
     log =
       capture_log(fn ->
-        assert {:ok, [{"good", 1, _, _, _}], 1} =
+        assert {:ok, [{"good", 1, _, _, _, _}], 1} =
                  Wal.replay(dir, [], fn rec, acc -> [rec | acc] end)
       end)
 
@@ -112,7 +112,7 @@ defmodule Kurwa.Store.WalTest do
     log =
       capture_log(fn ->
         assert {:ok, keys, 1} =
-                 Wal.replay(dir, [], fn {key, _, _, _, _}, acc -> acc ++ [key] end)
+                 Wal.replay(dir, [], fn {key, _, _, _, _, _}, acc -> acc ++ [key] end)
 
         assert keys == ["good"]
       end)

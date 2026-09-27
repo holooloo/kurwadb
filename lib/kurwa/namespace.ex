@@ -28,7 +28,7 @@ defmodule Kurwa.Namespace do
   @type name :: binary()
   @type result :: {:ok, boolean()} | {:error, term()}
 
-  @doc "Adds `key` to the set `name`."
+  @doc "Adds `key` to the set `name`. Takes the same options as `Kurwa.add/2`, `ttl:` included."
   @spec add(name(), binary(), keyword()) :: :ok | {:error, term()}
   def add(name, key, opts \\ []), do: Extractor.add(key, [set: name] ++ opts)
 

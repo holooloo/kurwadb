@@ -75,6 +75,32 @@ defmodule Kurwa.ClusterIntegrationTest do
            ]) == {:ok, true}
   end
 
+  test "a key with a ttl expires at the same instant on every replica", %{
+    peers: [one, two, three]
+  } do
+    key = "expiring"
+
+    assert TC.call(one, Kurwa, :add, [key, [ttl: 400]]) == :ok
+
+    # All three agree it is there...
+    for peer <- [one, two, three], do: assert(TC.call(peer, Kurwa, :fetch, [key]) == {:ok, true})
+
+    # ...and each of them holds the same absolute deadline, rather than each
+    # starting its own countdown when the write arrived.
+    deadlines =
+      for peer <- [one, two, three] do
+        {:ok, record} = TC.call(peer, Kurwa.Store, :get, [Kurwa.Key.encode(key)])
+        Kurwa.Record.expires_at(record)
+      end
+
+    assert Enum.uniq(deadlines) |> length() == 1
+
+    Process.sleep(500)
+
+    # No write, no message between them: expiry is a pure function of the record.
+    for peer <- [one, two, three], do: assert(TC.call(peer, Kurwa, :fetch, [key]) == {:ok, false})
+  end
+
   test "placement does not move when a replica becomes unreachable", %{
     peers: [one, _two, three],
     nodes: nodes

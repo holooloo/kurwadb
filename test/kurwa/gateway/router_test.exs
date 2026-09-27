@@ -136,6 +136,60 @@ defmodule Kurwa.Gateway.RouterTest do
     assert %{status: 400} = request(:get, "/union/k/x?sets=has%20space")
   end
 
+  test "a key can be given an expiry in the URL" do
+    key = unique_key("http-ttl")
+
+    assert %{status: 200} = request(:put, "/k/#{key}?ttl_ms=150")
+    assert %{status: 200, body: %{"member" => true}} = request(:get, "/k/#{key}")
+
+    Process.sleep(250)
+    assert %{status: 404, body: %{"member" => false}} = request(:get, "/k/#{key}")
+  end
+
+  test "named sets take an expiry too" do
+    key = unique_key("http-set-ttl")
+
+    assert %{status: 200} = request(:put, "/sets/alpha/k/#{key}?ttl_ms=150")
+    assert %{status: 200} = request(:get, "/sets/alpha/k/#{key}")
+
+    Process.sleep(250)
+    assert %{status: 404} = request(:get, "/sets/alpha/k/#{key}")
+  end
+
+  test "a batch can expire as a whole" do
+    keys = for i <- 1..3, do: unique_key("http-batch-ttl-#{i}")
+
+    assert %{status: 200, body: %{"applied" => 3}} =
+             request(:post, "/batch", %{op: "add", keys: keys, ttl_ms: 150})
+
+    assert %{status: 200, body: %{"members" => present}} =
+             request(:post, "/batch", %{op: "member", keys: keys})
+
+    assert Enum.all?(keys, &(present[&1] == true))
+
+    Process.sleep(250)
+
+    assert %{status: 200, body: %{"members" => gone}} =
+             request(:post, "/batch", %{op: "member", keys: keys})
+
+    assert Enum.all?(keys, &(gone[&1] == false))
+  end
+
+  test "a nonsense expiry is a client error, not a key that never dies" do
+    key = unique_key("bad-ttl")
+
+    assert %{status: 400, body: %{"error" => error}} = request(:put, "/k/#{key}?ttl=0")
+    assert error =~ "positive"
+
+    assert %{status: 400} = request(:put, "/k/#{key}?ttl=-1")
+    assert %{status: 400} = request(:put, "/k/#{key}?ttl=soon")
+    assert %{status: 400} = request(:put, "/k/#{key}?ttl=60&ttl_ms=1000")
+    assert %{status: 400} = request(:post, "/batch", %{op: "add", keys: [key], ttl: "soon"})
+
+    # and none of those created the key
+    assert %{status: 404} = request(:get, "/k/#{key}")
+  end
+
   test "count reports the cluster estimate and who answered" do
     assert %{status: 200, body: body} = request(:get, "/count")
 

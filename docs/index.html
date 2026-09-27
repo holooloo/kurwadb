@@ -327,7 +327,9 @@
 <pre><span class="k">Kurwa</span>.add(<span class="c">"order:1029"</span>)      <span class="c">#=> :ok</span>
 <span class="k">Kurwa</span>.member?(<span class="c">"order:1029"</span>)  <span class="c">#=> true</span>
 <span class="k">Kurwa</span>.delete(<span class="c">"order:1029"</span>)   <span class="c">#=> :ok</span>
-<span class="k">Kurwa</span>.count()                   <span class="c">#=> {:ok, %{approximate: 1, ...}}</span></pre>
+<span class="k">Kurwa</span>.count()                   <span class="c">#=> {:ok, %{approximate: 1, ...}}</span>
+
+<span class="k">Kurwa</span>.add(<span class="c">"seen:event:88"</span>, ttl: <span class="k">:timer</span>.minutes(10))</pre>
       <p>Плюс именованные множества и алгебра над ними:
         <code>member_any?(["blacklist", "greylist"], key)</code>.</p>
     </div>
@@ -365,12 +367,18 @@
           <dd>Недостижимый кворум — это <code>503</code>, никогда не <code>false</code>. Именно здесь врёт дедупликация на кэше.</dd>
         </div>
         <div class="spec">
-          <dt>382 нс</dt>
+          <dt>361 нс</dt>
           <dd>Локальная проверка принадлежности — один <code>:ets.lookup</code> в процессе вызывающего, без переключения контекста.</dd>
         </div>
         <div class="spec">
           <dt>Монтируется</dt>
           <dd>Ядро не знает про протоколы, поэтому БД отдаётся и по 9P: <code>ls</code>, <code>cat</code>, <code>stat</code> вместо админских ручек.</dd>
+        </div>
+        <div class="spec">
+          <dt>Ключи истекают</dt>
+          <dd>Координатор превращает TTL в абсолютный момент один раз, поэтому все реплики
+              приходят к одному вердикту сами, ничем не обмениваясь — истёкшему ключу не нужно
+              надгробие, чтобы остаться удалённым.</dd>
         </div>
         <div class="spec">
           <dt>Union бесплатно</dt>
@@ -396,21 +404,21 @@
       <div class="scroll">
         <table>
           <thead>
-            <tr><th scope="col">Операция</th><th scope="col">0.1.0</th></tr>
+            <tr><th scope="col">Операция</th><th scope="col">0.2.0</th></tr>
           </thead>
           <tbody>
-            <tr><td>Локальная проверка принадлежности</td><td class="num">382 нс</td></tr>
+            <tr><td>Локальная проверка принадлежности</td><td class="num">361 нс</td></tr>
             <tr><td>Кворум трёх нод, один клиент</td><td class="num">~47 мкс</td></tr>
-            <tr><td>Кворум трёх нод, 64 клиента</td><td class="num">54k зап/с · 59k чт/с</td></tr>
-            <tr><td><code>GET /k/:key</code> по HTTP, keep-alive</td><td class="num">113k зап/с</td></tr>
-            <tr><td><code>POST /batch</code>, 100 ключей в запросе</td><td class="num">389k ключей/с</td></tr>
-            <tr><td>Память на ключ</td><td class="num">120 Б · 144 Б</td></tr>
+            <tr><td>Кворум трёх нод, 64 клиента</td><td class="num">56k зап/с · 58k чт/с</td></tr>
+            <tr><td><code>GET /k/:key</code> по HTTP, keep-alive</td><td class="num">126k зап/с</td></tr>
+            <tr><td><code>POST /batch</code>, 100 ключей в запросе</td><td class="num">408k ключей/с</td></tr>
+            <tr><td>Память на ключ</td><td class="num">128 Б · 152 Б</td></tr>
           </tbody>
         </table>
       </div>
       <p>Apple M4, 10 ядер; все три ноды делят один процессор, <code>n=3 r=2 w=2</code>.
-         120 байт — при 13-байтном ключе, 144 — при 36-байтном.
-         Переиспользование соединения даёт 19×: без него те же запросы дают 5.9k/с,
+         128 байт — при 13-байтном ключе, 152 — при 36-байтном.
+         Переиспользование соединения даёт ~4×: без него те же запросы дают 32.5k/с,
          и это измеряет TCP, а не базу.</p>
     </div>
   </section>
@@ -461,7 +469,6 @@ member kurwa3@10.0.0.3 down</span>
       <ul class="limits">
         <li><b>Одна нода.</b> Redis лучше по всем статьям: проще, быстрее, десять лет в проде, экосистема.</li>
         <li><b>Допустимы ложные срабатывания и не нужны удаления.</b> Bloom-фильтр съест ~1,2 байта на ключ против наших 120.</li>
-        <li><b>Нужен TTL на ключ.</b> Его пока нет — есть только TTL на надгробия.</li>
         <li><b>Нужны сканы, листинги, запросы.</b> Их нет намеренно, и это не изменится.</li>
         <li><b>Ключи не влезают в RAM.</b> ~11 ГБ на 100 млн ключей; дискового движка пока нет.</li>
         <li><b>Ноль часов в проде.</b> Один автор, нет клиентских библиотек, нет TLS между нодами.</li>

@@ -154,7 +154,7 @@ defmodule Kurwa.Store.EtsTest do
 
     # Read the log back while the engine is still open and has flushed nothing on
     # a timer: with sync_on_write the entry is already durable.
-    assert {:ok, [{"durable", 1, _, true, _}], 1} =
+    assert {:ok, [{"durable", 1, _, true, _, _}], 1} =
              Kurwa.Store.Wal.replay(Path.join(dir, "synced"), [], fn rec, acc -> [rec | acc] end)
 
     Ets.close(state)
@@ -164,7 +164,7 @@ defmodule Kurwa.Store.EtsTest do
     {:ok, _, state} = Ets.put(state, record("a", lamport: 1))
     {:ok, _, _state} = Ets.put(state, record("b", lamport: 1, alive?: false))
 
-    keys = Ets.fold(Ets.handle(name), [], fn {key, _, _, _, _}, acc -> [key | acc] end)
+    keys = Ets.fold(Ets.handle(name), [], fn {key, _, _, _, _, _}, acc -> [key | acc] end)
 
     assert Enum.sort(keys) == ["a", "b"]
   end

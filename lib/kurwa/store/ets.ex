@@ -10,6 +10,10 @@ defmodule Kurwa.Store.Ets do
   Live keys are tracked in an `:atomics` counter instead of `:ets.info(:size)`,
   because the table also holds tombstones and `count/0` must not see them.
 
+  `count/0` counts records whose tombstone flag is set, so a key that expired
+  but has not been swept yet is still counted. The sweep corrects it; between
+  sweeps the count can run high by however many keys expired.
+
   Durability has a window by default. A write is appended to the log immediately
   but the log is fsynced periodically (`wal_sync_interval`), so a node that is
   killed hard can come back missing the last few milliseconds of writes it had
@@ -146,11 +150,24 @@ defmodule Kurwa.Store.Ets do
 
   @impl true
   def gc(%__MODULE__{} = state, cutoff) when is_integer(cutoff) do
-    # Tombstones only. Dropping one is not logged: a replay can resurrect it
-    # from the WAL, which is harmless (it is still a tombstone) and it goes away
-    # for good at the next compaction.
-    spec = [{{:_, :_, :_, false, :"$1"}, [{:<, :"$1", cutoff}], [true]}]
-    {:ets.select_delete(state.table, spec), state}
+    # Two kinds of dead record, both kept for the same grace period so a replica
+    # that was away cannot resurrect them: tombstones, and keys that outlived
+    # their expiry. Dropping either is not logged - a replay can bring it back
+    # from the WAL, which is harmless, and it goes for good at the next
+    # compaction.
+    tombstones = [{{:_, :_, :_, false, :"$1", :_}, [{:<, :"$1", cutoff}], [true]}]
+
+    # `:never` needs no guard of its own: an atom never compares below an integer.
+    expired = [{{:_, :_, :_, true, :_, :"$1"}, [{:<, :"$1", cutoff}], [true]}]
+
+    dropped_tombstones = :ets.select_delete(state.table, tombstones)
+    dropped_expired = :ets.select_delete(state.table, expired)
+
+    # An expired key was still counted as live, because nothing happened to it
+    # when it expired. The sweep is where the counter catches up.
+    if dropped_expired > 0, do: :counters.sub(state.live, 1, dropped_expired)
+
+    {dropped_tombstones + dropped_expired, state}
   end
 
   @impl true

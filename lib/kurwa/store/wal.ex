@@ -204,10 +204,17 @@ defmodule Kurwa.Store.Wal do
   # reject the node-name atoms of a node that has not been contacted yet.
   defp decode(payload) do
     case :erlang.binary_to_term(payload) do
+      {key, lamport, node, alive?, wall, expires_at}
+      when is_binary(key) and is_integer(lamport) and is_atom(node) and is_boolean(alive?) and
+             is_integer(wall) and (expires_at == :never or is_integer(expires_at)) ->
+        {:ok, {key, lamport, node, alive?, wall, expires_at}}
+
+      # A log written before keys could expire. Reading it costs nothing and
+      # saves anyone running a dev cluster from a wiped data directory.
       {key, lamport, node, alive?, wall}
       when is_binary(key) and is_integer(lamport) and is_atom(node) and is_boolean(alive?) and
              is_integer(wall) ->
-        {:ok, {key, lamport, node, alive?, wall}}
+        {:ok, {key, lamport, node, alive?, wall, :never}}
 
       _ ->
         :error

@@ -32,6 +32,7 @@ defmodule Kurwa.Extractor do
   alias Kurwa.Extractor.Cache
   alias Kurwa.Extractor.Flight
   alias Kurwa.Key
+  alias Kurwa.Record
 
   @type opts :: keyword()
 
@@ -47,7 +48,12 @@ defmodule Kurwa.Extractor do
     end
   end
 
-  @doc "Adds `key`, then writes the answer through the cache."
+  @doc """
+  Adds `key`, then writes the answer through the cache.
+
+  `ttl: milliseconds` makes the key expire on its own; the cache entry is capped
+  to match, so it cannot outlive the key.
+  """
   @spec add(binary(), opts()) :: :ok | {:error, term()}
   def add(key, opts \\ []) when is_binary(key), do: write(key, opts, &Coordinator.add/2, true)
 
@@ -95,17 +101,22 @@ defmodule Kurwa.Extractor do
     end
   end
 
-  # An error is never cached: the next reader should try the cluster again.
+  # An error is never cached: the next reader should try the cluster again. A
+  # positive answer is cached for no longer than the key itself has left.
   defp reload(storage_key, opts) do
-    case Coordinator.member?(storage_key, opts) do
-      {:ok, member?} = answer ->
-        Cache.put(storage_key, member?)
-        answer
+    case Coordinator.lookup(storage_key, opts) do
+      {:ok, record} ->
+        member? = Record.member?(record)
+        Cache.put(storage_key, member?, remaining(record))
+        {:ok, member?}
 
       error ->
         error
     end
   end
+
+  defp remaining(nil), do: :never
+  defp remaining(record), do: Record.ttl(record)
 
   defp write(key, opts, operation, outcome) do
     storage_key = storage_key(key, opts)
@@ -113,7 +124,7 @@ defmodule Kurwa.Extractor do
     case operation.(storage_key, opts) do
       :ok ->
         if enabled?() do
-          Cache.put(storage_key, outcome)
+          Cache.put(storage_key, outcome, Keyword.get(opts, :ttl, :never))
           broadcast(storage_key)
         end
 

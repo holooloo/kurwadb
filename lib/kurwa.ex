@@ -22,6 +22,7 @@ defmodule Kurwa do
   alias Kurwa.Config
   alias Kurwa.Coordinator
   alias Kurwa.Extractor
+  alias Kurwa.Key
   alias Kurwa.Record
   alias Kurwa.Ring
 
@@ -31,7 +32,13 @@ defmodule Kurwa do
   @doc """
   Adds `key` to the set. Idempotent.
 
-  Options: `:n`, `:w`, `:timeout` override the configured defaults for this call.
+  Options: `ttl: milliseconds` makes the key expire on its own; `:n`, `:w` and
+  `:timeout` override the configured defaults for this call.
+
+      Kurwa.add("seen:event:88", ttl: :timer.minutes(10))
+
+  A second `add` replaces the deadline rather than extending it, because the
+  newer write simply wins the merge.
   """
   @spec add(key(), opts()) :: :ok | {:error, term()}
   def add(key, opts \\ []) when is_binary(key), do: Extractor.add(key, opts)
@@ -61,6 +68,20 @@ defmodule Kurwa do
   @doc "Like `member?/2`, but returns the error instead of raising."
   @spec fetch(key(), opts()) :: {:ok, boolean()} | {:error, term()}
   def fetch(key, opts \\ []) when is_binary(key), do: Extractor.member?(key, opts)
+
+  @doc """
+  Milliseconds until `key` expires.
+
+  `:never` for a key with no expiry, `nil` when it is not a member. Always reads
+  the cluster, never the extractor cache, because the cache remembers the answer
+  and not the deadline.
+  """
+  @spec ttl(key(), opts()) :: {:ok, non_neg_integer() | :never | nil} | {:error, term()}
+  def ttl(key, opts \\ []) when is_binary(key) do
+    with {:ok, record} <- Coordinator.lookup(Key.encode(key), opts) do
+      if Record.member?(record), do: {:ok, Record.ttl(record)}, else: {:ok, nil}
+    end
+  end
 
   @doc "Approximate number of live keys in the cluster. See `Kurwa.Coordinator.count/1`."
   @spec count(opts()) :: {:ok, map()} | {:error, term()}

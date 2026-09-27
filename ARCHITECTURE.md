@@ -34,11 +34,12 @@ touching the cluster.
 Everything kurwadb stores is this:
 
 ```elixir
-{key, lamport, node, alive?, wall}
+{key, lamport, node, alive?, wall, expires_at}
 ```
 
-`alive?` is membership; `false` is a tombstone. `wall` is used only to expire
-tombstones and never to order anything. Merge is last-writer-wins on
+`alive?` is membership; `false` is a tombstone. `wall` is used only to age
+tombstones out and never to order anything. `expires_at` is an absolute instant
+or `:never`. Merge is last-writer-wins on
 `{lamport, node}`:
 
 ```elixir
@@ -66,11 +67,23 @@ same key from several coordinators at once will see whichever stamp is higher.
 clock lives in `:atomics`, is raised by every record we accept from a peer and by
 every record replayed from the WAL, so a restarted node never reissues a stamp.
 
+**Expiry.** A key can be given a TTL, and the coordinator turns it into an
+absolute deadline once, so every replica stores the same instant rather than
+each starting its own countdown when the write arrives. Expiry is then a *pure
+function of the record*: every replica reaches the same verdict at the same
+moment with nothing exchanged, which is why an expired key needs no tombstone to
+stay gone. Two consequences worth stating. It is the one place wall-clock time
+decides an answer, so unlike ordering it is exposed to clock skew. And `:never`
+is the sentinel rather than `nil` or `0` because in Erlang term order every
+number sorts before every atom, so `expires_at < now` is already false without a
+special case - in the guards and in the sweeper's match specs alike.
+
 **Tombstones.** A delete writes a tombstone, because a replica that never heard
 about the delete would otherwise resurrect the key on the next merge. Tombstones
 are dropped after `tombstone_ttl`. This is a real tradeoff, not a detail: the TTL
 must exceed the longest time a replica can be away, or that replica can come back
-holding a live key whose tombstone has been collected, and resurrect it.
+holding a live key whose tombstone has been collected, and resurrect it. Expired
+keys are swept on the same grace period and for the same reason.
 
 ## Placement
 

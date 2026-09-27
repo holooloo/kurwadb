@@ -3,9 +3,10 @@ defmodule Kurwa.Gateway.Router do
   HTTP surface of kurwadb.
 
       PUT    /k/:key                add the key            -> 200
+                                    ?ttl=<seconds> or ?ttl_ms=<ms> to expire it
       GET    /k/:key                membership check       -> 200 member / 404 absent
       DELETE /k/:key                remove the key         -> 200
-      POST   /batch                 {"op":"add"|"member"|"delete","keys":[...]}
+      POST   /batch                 {"op":"add"|"member"|"delete","keys":[...],"ttl":<seconds>}
 
       PUT    /sets/:set/k/:key      same three, in a named set
       GET    /sets/:set/k/:key
@@ -46,8 +47,9 @@ defmodule Kurwa.Gateway.Router do
   plug(:dispatch)
 
   put "/k/:key" do
-    with {:ok, decoded} <- decode_key(conn, key) do
-      respond(conn, Kurwa.add(decoded), %{ok: true, key: key})
+    with {:ok, decoded} <- decode_key(conn, key),
+         {:ok, opts} <- ttl_opts(conn) do
+      respond(conn, Kurwa.add(decoded, opts), %{ok: true, key: key})
     else
       error -> key_error(conn, error)
     end
@@ -71,8 +73,9 @@ defmodule Kurwa.Gateway.Router do
 
   put "/sets/:set/k/:key" do
     with {:ok, set} <- namespace(set),
-         {:ok, decoded} <- decode_key(conn, key) do
-      respond(conn, Namespace.add(set, decoded), %{ok: true, set: set, key: key})
+         {:ok, decoded} <- decode_key(conn, key),
+         {:ok, opts} <- ttl_opts(conn) do
+      respond(conn, Namespace.add(set, decoded, opts), %{ok: true, set: set, key: key})
     else
       error -> key_error(conn, error)
     end
@@ -128,7 +131,10 @@ defmodule Kurwa.Gateway.Router do
             json(conn, 400, %{error: "keys must be strings"})
 
           true ->
-            json(conn, 200, run_batch(op, keys))
+            case batch_ttl(conn.body_params) do
+              {:ok, opts} -> json(conn, 200, run_batch(op, keys, opts))
+              error -> key_error(conn, error)
+            end
         end
 
       _ ->
@@ -183,7 +189,7 @@ defmodule Kurwa.Gateway.Router do
     json(conn, 404, %{error: "no such route"})
   end
 
-  defp run_batch("member", keys) do
+  defp run_batch("member", keys, _opts) do
     results =
       keys
       |> parallel(fn key -> Kurwa.fetch(key) end)
@@ -202,8 +208,8 @@ defmodule Kurwa.Gateway.Router do
     %{op: "member", members: results.members, errors: results.errors}
   end
 
-  defp run_batch(op, keys) do
-    fun = if op == "add", do: &Kurwa.add/1, else: &Kurwa.delete/1
+  defp run_batch(op, keys, opts) do
+    fun = if op == "add", do: &Kurwa.add(&1, opts), else: &Kurwa.delete/1
 
     errors =
       keys
@@ -240,6 +246,40 @@ defmodule Kurwa.Gateway.Router do
     end
   end
 
+  # TTL arrives in seconds, which is what a person types into curl; everything
+  # below this line works in milliseconds.
+  defp ttl_opts(conn) do
+    conn = fetch_query_params(conn)
+
+    case {conn.query_params["ttl"], conn.query_params["ttl_ms"]} do
+      {nil, nil} -> {:ok, []}
+      {_, _} = both when elem(both, 0) != nil and elem(both, 1) != nil -> {:error, :bad_ttl}
+      {raw, nil} -> with {:ok, ms} <- parse_ttl(raw), do: {:ok, [ttl: ms]}
+      {nil, raw} -> with {:ok, ms} <- parse_ttl(raw, 1), do: {:ok, [ttl: ms]}
+    end
+  end
+
+  defp batch_ttl(%{"ttl_ms" => raw}) when not is_nil(raw), do: wrap_ttl(raw, 1)
+  defp batch_ttl(%{"ttl" => raw}) when not is_nil(raw), do: wrap_ttl(raw, 1000)
+  defp batch_ttl(_params), do: {:ok, []}
+
+  defp wrap_ttl(raw, scale) do
+    with {:ok, ms} <- parse_ttl(raw, scale), do: {:ok, [ttl: ms]}
+  end
+
+  defp parse_ttl(raw, scale \\ 1000)
+  defp parse_ttl(raw, scale) when is_integer(raw) and raw > 0, do: {:ok, raw * scale}
+  defp parse_ttl(raw, _scale) when is_integer(raw), do: {:error, :bad_ttl}
+
+  defp parse_ttl(raw, scale) when is_binary(raw) do
+    case Integer.parse(raw) do
+      {n, ""} when n > 0 -> {:ok, n * scale}
+      _ -> {:error, :bad_ttl}
+    end
+  end
+
+  defp parse_ttl(_raw, _scale), do: {:error, :bad_ttl}
+
   defp namespace(name) do
     if Namespace.valid_name?(name), do: {:ok, name}, else: {:error, {:bad_set, name}}
   end
@@ -272,6 +312,12 @@ defmodule Kurwa.Gateway.Router do
 
   defp key_error(conn, {:error, {:bad_set, name}}),
     do: json(conn, 400, %{error: "invalid set name: #{inspect(name)}"})
+
+  defp key_error(conn, {:error, :bad_ttl}),
+    do:
+      json(conn, 400, %{
+        error: "pass one of ttl (whole seconds) or ttl_ms (milliseconds), both positive"
+      })
 
   defp key_error(conn, {:error, :no_sets}),
     do: json(conn, 400, %{error: "pass ?sets=a,b with at least one set name"})

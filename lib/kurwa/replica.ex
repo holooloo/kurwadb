@@ -53,9 +53,10 @@ defmodule Kurwa.Replica do
   @spec ping() :: :pong
   def ping, do: :pong
 
-  defp valid_record?({key, lamport, origin, alive?, wall})
+  defp valid_record?({key, lamport, origin, alive?, wall, expires_at})
        when is_binary(key) and is_integer(lamport) and lamport >= 0 and is_atom(origin) and
-              is_boolean(alive?) and is_integer(wall),
+              is_boolean(alive?) and is_integer(wall) and
+              (expires_at == :never or is_integer(expires_at)),
        do: true
 
   defp valid_record?(_), do: false

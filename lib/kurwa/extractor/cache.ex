@@ -42,10 +42,17 @@ defmodule Kurwa.Extractor.Cache do
     ArgumentError -> :miss
   end
 
-  @doc "Caches an answer, with the TTL that matches its polarity."
-  @spec put(binary(), boolean()) :: :ok
-  def put(storage_key, member?) do
+  @doc """
+  Caches an answer, with the TTL that matches its polarity.
+
+  `max_ttl` caps it: a key that expires in 200ms must not be remembered as
+  present for the full positive TTL, or the cache would outlive the key.
+  """
+  @spec put(binary(), boolean(), non_neg_integer() | :never) :: :ok
+  def put(storage_key, member?, max_ttl \\ :never) do
     ttl = if member?, do: Config.get(:cache_ttl), else: Config.get(:cache_negative_ttl)
+    ttl = if max_ttl == :never, do: ttl, else: min(ttl, max_ttl)
+
     :ets.insert(@table, {storage_key, member?, now() + ttl})
     :ok
   rescue

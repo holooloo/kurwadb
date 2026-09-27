@@ -29,7 +29,12 @@ defmodule Kurwa.Coordinator do
           | {:error, :no_replicas_reachable}
           | {:error, {:quorum_not_met, map()}}
 
-  @doc "Adds `key` to the set."
+  @doc """
+  Adds `key` to the set.
+
+  `ttl: milliseconds` makes the key expire on its own. Expiry is wall-clock, so
+  unlike everything else here it is exposed to clock skew between nodes.
+  """
   @spec add(Record.key(), keyword()) :: :ok | error()
   def add(key, opts \\ []) when is_binary(key), do: write(key, true, opts)
 
@@ -39,7 +44,19 @@ defmodule Kurwa.Coordinator do
 
   @doc "Is `key` in the set?"
   @spec member?(Record.key(), keyword()) :: {:ok, boolean()} | error()
-  def member?(key, opts \\ []) when is_binary(key) do
+  def member?(key, opts \\ []) do
+    with {:ok, record} <- lookup(key, opts), do: {:ok, Record.member?(record)}
+  end
+
+  @doc """
+  The merged record for `key`, or `nil` if no replica has one.
+
+  `member?/2` is this plus one predicate. It is separate because a caller that
+  is about to cache the answer needs to know when the key expires, not just
+  whether it is there now.
+  """
+  @spec lookup(Record.key(), keyword()) :: {:ok, Record.t() | nil} | error()
+  def lookup(key, opts \\ []) when is_binary(key) do
     with {:ok, placement} <- placement(key, opts) do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
       targets = placement.up
@@ -50,7 +67,7 @@ defmodule Kurwa.Coordinator do
       if length(outcome.ok) >= r do
         winner = outcome.ok |> Enum.map(fn {_node, record} -> record end) |> Record.merge_all()
         repair(outcome.ok, winner)
-        {:ok, Record.alive?(winner)}
+        {:ok, winner}
       else
         {:error, {:quorum_not_met, details(:read, r, placement, outcome)}}
       end
@@ -94,7 +111,7 @@ defmodule Kurwa.Coordinator do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
       targets = placement.up
       w = quorum_size(Keyword.get(opts, :w, Config.w()), targets)
-      record = Record.new(key, Clock.tick(), node(), alive?)
+      record = Record.new(key, Clock.tick(), node(), alive?, nil, expiry(opts))
 
       outcome = Quorum.run(targets, &replica_put(&1, record, timeout), w, timeout)
 
@@ -108,6 +125,23 @@ defmodule Kurwa.Coordinator do
       else
         {:error, {:quorum_not_met, details(:write, w, placement, outcome)}}
       end
+    end
+  end
+
+  # A TTL is turned into an absolute instant by the coordinator, once, so every
+  # replica stores the same deadline instead of each starting its own countdown
+  # when the write happens to arrive.
+  defp expiry(opts) do
+    case Keyword.get(opts, :ttl) do
+      nil ->
+        :never
+
+      ms when is_integer(ms) and ms > 0 ->
+        System.system_time(:millisecond) + ms
+
+      other ->
+        raise ArgumentError,
+              "ttl must be a positive number of milliseconds, got #{inspect(other)}"
     end
   end
 
