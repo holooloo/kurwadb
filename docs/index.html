@@ -6,6 +6,7 @@
 <title>kurwadb</title>
 <meta name="description" content="A distributed set. Keys and nothing else — no values, no scans, no leader.">
 <meta property="og:title" content="kurwadb — a key is its own payload">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <meta property="og:description" content="A distributed set on the BEAM. Keys and nothing else.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://kurwadb.dev/">
@@ -15,53 +16,58 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
   :root {
-    --ground: #fbfaf7;
-    --surface: #ffffff;
-    --sunken: #f4f1ea;
-    --ink: #1b1a17;
-    --muted: #6e6a62;
-    --faint: #98938a;
-    --rule: #e6e2da;
-    --rule-strong: #d3cec3;
-    --accent: #9a4f0a;
-    --accent-soft: #fdf5e9;
-    --teal: #0f6f68;
-    --ok: #15803d;
-    --ok-soft: #f0fdf4;
+    /* birch, felled wood, and the river behind the dam */
+    --ground: #faf6ef;
+    --surface: #fffdf9;
+    --sunken: #f3ece0;
+    --ink: #241a12;
+    --muted: #6b5a4a;
+    --faint: #9a8877;
+    --rule: #e8ddcd;
+    --rule-strong: #d2c2aa;
+    --accent: #8a4b1f;
+    --accent-soft: #fbf1e4;
+    --teal: #1f6f7a;
+    --ok: #3f7d20;
+    --ok-soft: #f1f7ec;
     --down: #b3261e;
     --down-soft: #fdf2f1;
     --plate: #fcfcfb;
+    --fur: #8a4b1f;
+    --fur-light: #d3a678;
     color-scheme: light;
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --ground: #14130f;
-      --surface: #1c1b16;
-      --sunken: #1f1d17;
-      --ink: #f2efe8;
-      --muted: #a8a298;
-      --faint: #7d786e;
-      --rule: #2c2a23;
-      --rule-strong: #3f3b32;
-      --accent: #e2a35a;
-      --accent-soft: #261b0f;
-      --teal: #5fc7bd;
-      --ok: #5ec97f;
-      --ok-soft: #152318;
+      --ground: #17120d;
+      --surface: #201810;
+      --sunken: #241b12;
+      --ink: #f4ece0;
+      --muted: #ab9782;
+      --faint: #7f6d5b;
+      --rule: #342a1f;
+      --rule-strong: #47392a;
+      --accent: #e0a05a;
+      --accent-soft: #2a1d10;
+      --teal: #5fc0cd;
+      --ok: #86c06a;
+      --ok-soft: #1a2314;
       --down: #f0857c;
       --down-soft: #2a1614;
       --plate: #fcfcfb;
+      --fur: #b06a33;
+      --fur-light: #d9ab7c;
       color-scheme: dark;
     }
   }
 
   :root[data-theme="dark"] {
-    --ground: #14130f; --surface: #1c1b16; --sunken: #1f1d17; --ink: #f2efe8;
-    --muted: #a8a298; --faint: #7d786e; --rule: #2c2a23; --rule-strong: #3f3b32;
-    --accent: #e2a35a; --accent-soft: #261b0f; --teal: #5fc7bd;
-    --ok: #5ec97f; --ok-soft: #152318; --down: #f0857c; --down-soft: #2a1614;
-    --plate: #fcfcfb; color-scheme: dark;
+    --ground: #17120d; --surface: #201810; --sunken: #241b12; --ink: #f4ece0;
+    --muted: #ab9782; --faint: #7f6d5b; --rule: #342a1f; --rule-strong: #47392a;
+    --accent: #e0a05a; --accent-soft: #2a1d10; --teal: #5fc0cd;
+    --ok: #86c06a; --ok-soft: #1a2314; --down: #f0857c; --down-soft: #2a1614;
+    --plate: #fcfcfb; --fur: #b06a33; --fur-light: #d9ab7c; color-scheme: dark;
   }
 
   * { box-sizing: border-box; }
@@ -148,6 +154,30 @@
   .key-group { animation: key-in 0.3s ease both, key-out 0.5s ease 2.2s both; }
   .key-group .key-halo { animation: halo 1.1s ease-out both; }
   .key-group .key-link { stroke-dasharray: var(--len); animation: draw 0.45s ease-out 0.12s both; }
+
+  /* ---------------------------------------------------------------- bobr */
+  .bobr .fur { fill: var(--fur); }
+  .bobr .fur-in { fill: var(--fur-light); }
+  .bobr .muzzle { fill: var(--fur-light); }
+  .bobr .eye, .bobr .nose { fill: var(--ink); }
+  .bobr .glint { fill: var(--surface); }
+  .bobr .teeth { fill: #fffdf5; stroke: var(--rule-strong); stroke-width: 1; }
+  .bobr .split { stroke: var(--rule-strong); stroke-width: 1; }
+  .bobr-mark { width: 26px; height: 26px; display: block; flex: none; }
+  .bobr-disc { fill: var(--surface); }
+
+  /* the tail-slap: beavers warn each other by smacking the water */
+  @keyframes slap {
+    0%, 88%, 100% { transform: rotate(0deg); }
+    92% { transform: rotate(-7deg); }
+    96% { transform: rotate(5deg); }
+  }
+  #ring .bobr { transform-origin: 160px 160px; animation: slap 9s ease-in-out infinite; }
+
+  .polish {
+    font-family: "IBM Plex Mono", monospace; font-size: 0.72rem;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent);
+  }
 
   /* --------------------------------------------------------------- sections */
   .row {
@@ -293,8 +323,22 @@
 
   <header class="hero">
     <div class="wordmark">
+      <svg class="bobr-mark bobr" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="fur" cx="26" cy="43" r="9"></circle>
+        <circle class="fur-in" cx="26" cy="43" r="4"></circle>
+        <circle class="fur" cx="94" cy="43" r="9"></circle>
+        <circle class="fur-in" cx="94" cy="43" r="4"></circle>
+        <ellipse class="fur" cx="60" cy="65" rx="41" ry="37"></ellipse>
+        <ellipse class="muzzle" cx="60" cy="81" rx="29" ry="21"></ellipse>
+        <circle class="eye" cx="45" cy="56" r="5"></circle>
+        <circle class="eye" cx="75" cy="56" r="5"></circle>
+        <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
+        <rect class="teeth" x="49" y="76" width="22" height="26" rx="4"></rect>
+        <line class="split" x1="60" y1="77" x2="60" y2="101"></line>
+      </svg>
       <b>kurwadb</b>
       <span class="eyebrow">a distributed set · elixir / beam</span>
+      <span class="polish">bóbr, kurwa</span>
     </div>
 
     <div class="hero-grid">
@@ -322,6 +366,24 @@
               <path class="key-link" d="M 139.2 278.2 Q 160 160 263.9 220"></path>
               <path class="key-link" d="M 139.2 278.2 Q 160 160 56.1 220"></path>
               <circle class="key-dot" cx="139.2" cy="278.2" r="4"></circle>
+            </g>
+          </g>
+          <g class="bobr" aria-hidden="true">
+            <circle class="bobr-disc" cx="160" cy="160" r="46"></circle>
+            <g transform="translate(120 120) scale(0.667)">
+              <circle class="fur" cx="26" cy="43" r="9"></circle>
+              <circle class="fur-in" cx="26" cy="43" r="4"></circle>
+              <circle class="fur" cx="94" cy="43" r="9"></circle>
+              <circle class="fur-in" cx="94" cy="43" r="4"></circle>
+              <ellipse class="fur" cx="60" cy="65" rx="41" ry="37"></ellipse>
+              <ellipse class="muzzle" cx="60" cy="81" rx="29" ry="21"></ellipse>
+              <circle class="eye" cx="45" cy="56" r="5"></circle>
+              <circle class="eye" cx="75" cy="56" r="5"></circle>
+              <circle class="glint" cx="46.7" cy="54.3" r="1.6"></circle>
+              <circle class="glint" cx="76.7" cy="54.3" r="1.6"></circle>
+              <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
+              <rect class="teeth" x="49" y="76" width="22" height="26" rx="4"></rect>
+              <line class="split" x1="60" y1="77" x2="60" y2="101"></line>
             </g>
           </g>
           <g id="ring-nodes">
@@ -411,7 +473,7 @@
         </div>
         <div class="spec">
           <dt>Self-healing</dt>
-          <dd>A node that was away keeps its share of the ring; the writes it missed are replayed when it returns. No operator step.</dd>
+          <dd>A node that was away keeps its share of the ring; the writes it missed are replayed when it returns. Nobody asks the beaver to repair the dam — it just turns up with the logs.</dd>
         </div>
         <div class="spec">
           <dt>Error ≠ absent</dt>
@@ -475,7 +537,8 @@
         </table>
       </div>
       <p>Apple M4, 10 cores; all three nodes share that one CPU, <code>n=3 r=2 w=2</code>.
-         128 bytes for a 13-byte key, 152 for a 36-byte one.</p>
+         128 bytes for a 13-byte key, 152 for a 36-byte one — <em>jaki gruby</em>, and
+         measured rather than guessed.</p>
     </div>
   </section>
 
@@ -548,6 +611,7 @@ curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — read from a di
   <footer>
     <span>MIT</span>
     <span>187 tests, plus 11 against three real nodes</span>
+    <span class="polish">bóbr, kurwa</span>
     <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
   </footer>
 
