@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>A database that stores keys and nothing else</title>
+<meta name="description" content="What falls out of one constraint, and the three bugs that only turned up when I measured.">
+<meta name="author" content="kurwadb">
+<meta property="og:title" content="A database that stores keys and nothing else">
+<meta property="og:description" content="What falls out of one constraint, and the three bugs that only turned up when I measured.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://kurwadb.dev/article.html">
+<link rel="canonical" href="https://kurwadb.dev/article.html">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --ground: #fff8ea; --surface: #ffffff; --sunken: #fff1d6; --ink: #2b2118;
+    --muted: #6f6154; --faint: #9c8b7a; --outline: #2b2118; --rule: #ead9bd;
+    --accent: #e2761b; --teal: #16a5c4; --leaf: #57a536; --sun: #f4bc36;
+    --sun-soft: #fff0c4; --berry: #e2574c; --berry-soft: #ffe0dc; --shadow: #2b2118;
+    --fur: #c9752a; --fur-light: #f2c692;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #2a2018; --surface: #362a1f; --sunken: #413223; --ink: #fdf3e3;
+      --muted: #c3b09a; --faint: #91806e; --outline: #140e08; --rule: #4d3d2c;
+      --accent: #f59a3c; --teal: #4cc8e0; --leaf: #7ec95f; --sun: #f7cc5c;
+      --sun-soft: #3d2f12; --berry: #f2776b; --berry-soft: #3d1f1b; --shadow: #140e08;
+      --fur: #d98b3f; --fur-light: #f3cb9b;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #2a2018; --surface: #362a1f; --sunken: #413223; --ink: #fdf3e3;
+    --muted: #c3b09a; --faint: #91806e; --outline: #140e08; --rule: #4d3d2c;
+    --accent: #f59a3c; --teal: #4cc8e0; --leaf: #7ec95f; --sun: #f7cc5c;
+    --sun-soft: #3d2f12; --berry: #f2776b; --berry-soft: #3d1f1b; --shadow: #140e08;
+    --fur: #d98b3f; --fur-light: #f3cb9b;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+    font-size: 18px; line-height: 1.72; -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; padding-inline: clamp(20px, 5vw, 40px); }
+  a { color: var(--accent); font-weight: 500; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+  :focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; border-radius: 6px; }
+  code, pre { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  code { font-size: 0.88em; background: var(--sunken); padding: 1px 5px; border-radius: 5px; }
+
+  .topbar { display: flex; align-items: center; gap: 10px; padding-block: 26px 0; }
+  .topbar b { font-family: "IBM Plex Mono", monospace; font-size: 1rem; font-weight: 600; }
+  .topbar a { text-decoration: none; color: var(--ink); display: flex; align-items: center; gap: 10px; }
+  .bobr-mark { width: 30px; height: 30px; flex: none; }
+  .bobr .fur, .bobr .muzzle, .bobr .nose, .bobr .teeth, .bobr .fur-in {
+    stroke: var(--outline); stroke-width: 3; stroke-linejoin: round;
+  }
+  .bobr .fur { fill: var(--fur); } .bobr .fur-in, .bobr .muzzle { fill: var(--fur-light); }
+  .bobr .eye, .bobr .nose { fill: var(--outline); } .bobr .teeth { fill: #fffdf5; }
+  .bobr .cheek { fill: var(--berry); opacity: 0.45; }
+  .bobr .split { stroke: var(--outline); stroke-width: 2; }
+
+  header.post { padding-block: clamp(34px, 6vw, 58px) clamp(22px, 3vw, 34px); }
+  h1 {
+    margin: 0; font-size: clamp(2rem, 5.4vw, 3rem); font-weight: 700;
+    letter-spacing: -0.03em; line-height: 1.08; text-wrap: balance;
+  }
+  .dek { margin: 18px 0 0; font-size: clamp(1.05rem, 2.2vw, 1.22rem); color: var(--muted); text-wrap: pretty; }
+  .byline {
+    margin-top: 22px; padding-top: 16px; border-top: 2.5px solid var(--outline);
+    font-family: "IBM Plex Mono", monospace; font-size: 0.76rem;
+    letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint);
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+  }
+
+  h2 {
+    margin: clamp(38px, 6vw, 54px) 0 14px; font-size: clamp(1.35rem, 3vw, 1.7rem);
+    font-weight: 700; letter-spacing: -0.02em; text-wrap: balance;
+  }
+  h2::before {
+    content: ""; display: block; width: 44px; height: 5px; border-radius: 999px;
+    background: var(--accent); margin-bottom: 14px;
+  }
+  h2:nth-of-type(3n + 2)::before { background: var(--teal); }
+  h2:nth-of-type(3n + 3)::before { background: var(--leaf); }
+
+  p { margin: 0 0 18px; text-wrap: pretty; }
+
+  pre {
+    margin: 0 0 22px; padding: 16px 18px; background: var(--sunken);
+    border: 2.5px solid var(--outline); border-radius: 14px;
+    overflow-x: auto; font-size: 0.82rem; line-height: 1.65;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  blockquote {
+    margin: 0 0 22px; padding: 16px 20px; background: var(--sun-soft);
+    border: 2.5px solid var(--outline); border-radius: 14px; box-shadow: 5px 5px 0 var(--shadow);
+    font-size: 1.04rem;
+  }
+  blockquote p:last-child { margin: 0; }
+
+  .scroll { overflow-x: auto; margin-bottom: 22px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 10px 14px 10px 0; border-bottom: 2px dashed var(--rule); vertical-align: top; }
+  th { font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; white-space: nowrap; font-weight: 600; color: var(--accent); }
+
+  figure { margin: 0 0 26px; }
+  .plate {
+    background: #fcfcfb; border: 2.5px solid var(--outline); border-radius: 14px;
+    box-shadow: 5px 5px 0 var(--shadow); padding: 10px; overflow-x: auto;
+  }
+  .plate img { display: block; width: 100%; min-width: 560px; height: auto; }
+  figcaption { margin-top: 10px; font-size: 0.84rem; color: var(--muted); }
+
+  ul { padding-left: 22px; margin: 0 0 18px; }
+  li { margin-bottom: 8px; }
+
+  .end {
+    margin-top: clamp(40px, 6vw, 60px); padding: 18px 20px;
+    border: 2.5px solid var(--outline); border-radius: 14px; background: var(--surface);
+    box-shadow: 5px 5px 0 var(--shadow);
+  }
+  .end p { margin: 0 0 10px; }
+  .end p:last-child { margin: 0; }
+
+  footer {
+    margin-top: 40px; border-top: 2.5px solid var(--outline); padding-block: 24px 56px;
+    display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 0.88rem; color: var(--muted);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <a href="/">
+      <svg class="bobr-mark bobr" viewBox="0 0 120 120" aria-hidden="true">
+        <circle class="fur" cx="26" cy="43" r="9"></circle>
+        <circle class="fur-in" cx="26" cy="43" r="4"></circle>
+        <circle class="fur" cx="94" cy="43" r="9"></circle>
+        <circle class="fur-in" cx="94" cy="43" r="4"></circle>
+        <ellipse class="fur" cx="60" cy="65" rx="41" ry="37"></ellipse>
+        <ellipse class="muzzle" cx="60" cy="81" rx="29" ry="21"></ellipse>
+        <circle class="eye" cx="45" cy="56" r="5"></circle>
+        <circle class="eye" cx="75" cy="56" r="5"></circle>
+        <circle class="cheek" cx="30" cy="76" r="8"></circle>
+        <circle class="cheek" cx="90" cy="76" r="8"></circle>
+        <ellipse class="nose" cx="60" cy="69" rx="8.5" ry="6"></ellipse>
+        <rect class="teeth" x="49" y="76" width="22" height="26" rx="4"></rect>
+        <line class="split" x1="60" y1="77" x2="60" y2="101"></line>
+      </svg>
+      <b>kurwadb</b>
+    </a>
+  </div>
+
+  <header class="post">
+    <h1>A database that stores keys and nothing else</h1>
+    <p class="dek">One constraint, followed all the way down — and the three bugs that
+       only turned up once I stopped describing the thing and started measuring it.</p>
+    <div class="byline">
+      <span>Elixir · BEAM</span>
+      <span>about 9 minutes</span>
+      <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
+    </div>
+  </header>
+
+  <p>There is a question that keeps coming back in different clothes. <em>Have I already
+     seen this?</em> Deduplicating a message bus that redelivers. Idempotency keys on a
+     payment endpoint. Rate-limit buckets. Blocklists. A crawler's set of fetched URLs.</p>
+
+  <p>Every general-purpose store can answer it, and each one charges for generality this
+     question does not need: a value to put somewhere, a leader to elect, a merge to
+     resolve, a scan to avoid, a JVM to tune. So I went the other way and built a store
+     that supports exactly one data type — the key — to find out what that buys.</p>
+
+  <p>The short version: more than I expected, and the interesting parts were not the
+     ones I designed.</p>
+
+  <h2>What the constraint pays for</h2>
+
+  <p>With no values, two concurrent writes to the same key cannot disagree about
+     anything except whether the key exists. That collapses the hardest problem in a
+     replicated store into a comparison of two integers:</p>
+
+<pre><code>{key, lamport, node, alive?, wall, expires_at}
+
+def merge(a, b), do: if newer?(a, b), do: a, else: b   # total order on {lamport, node}</code></pre>
+
+  <p>Commutative, associative, idempotent. Two replicas that have seen the same writes
+     agree, in any order, with nothing exchanged. Compare what the application has to do
+     elsewhere: read a vector clock and resolve siblings in Riak, reason about per-cell
+     timestamps and <code>gc_grace_seconds</code> in Cassandra, write conditional
+     expressions in DynamoDB. Here it does nothing, because there is nothing to lose.</p>
+
+  <blockquote>
+    <p>The per-key metadata is four fixed fields and does not grow with the cluster or
+       with write history — unlike a vector clock, which grows with every actor that
+       ever touched the key.</p>
+  </blockquote>
+
+  <p>Two more things fall out. There is no leader, so there is no election and no pause
+     during failover; any node coordinates any key, and losing one costs capacity rather
+     than availability. And because a key is its own payload, the replica-local answer is
+     a single <code>:ets.lookup</code> in the caller's own process — no mailbox, no copy,
+     no serialisation. That path measures 361 nanoseconds.</p>
+
+  <h2>An unexpected detour through Plan 9</h2>
+
+  <p>Partway in it became obvious that the data model already existed somewhere else. In
+     Plan 9, data <em>is</em> a name in a namespace — and a set with no values is a
+     directory of empty files. The mapping is not a metaphor, it is the same structure:</p>
+
+<pre><code>stat    →  member?     walking to a key fails with ENOENT when it is absent
+create  →  add
+remove  →  delete</code></pre>
+
+  <p>So the store speaks 9P as a second frontend. Mount it, and you inspect the database
+     with <code>ls</code>, <code>cat</code> and <code>stat</code>, with no client library
+     at all; control files replace a pile of admin endpoints. Adding the whole thing
+     changed nothing in the replication core.</p>
+
+  <p>Plan 9's union mounts came along for free too. <code>bind -a</code> makes one name
+     resolve through several directories in order, which — for a store that holds only
+     keys — is exactly set union. Named sets compose at read time, copying nothing:
+     <code>member_any?(["blacklist", "greylist"], key)</code> is three concurrent quorum
+     reads that stop at the first <code>true</code>.</p>
+
+  <p>Where Plan 9 does not fit, it does not fit hard, and the honest thing is to say so:
+     9P is stateful and walk-oriented, which is the wrong shape for fanning a write out
+     to replicas, and it has nothing to say about quorums. Nodes replicate over Erlang
+     distribution. 9P is a client frontend and nothing more.</p>
+
+  <h2>Bug one: the repair that repaired 80% of it</h2>
+
+  <p>Three nodes on one machine, <code>n=3 r=2 w=2</code>. Kill a node, write ten keys,
+     bring it back, read the keys so read repair can heal it. It healed eight.</p>
+
+  <p>The immediate cause: read repair only fixes replicas that <em>answered</em>, and a
+     quorum of two returns as soon as two of three have replied — so the third usually
+     misses its own repair. The deeper cause was worse. The ring was built from reachable
+     nodes, so a node that went down dropped out of the preference list entirely.
+     Ownership moved on the way down and moved back on the way up, and in between nobody
+     was responsible for the writes the absent node missed. There was nothing accumulating
+     for it because, as far as the ring was concerned, it was not a replica.</p>
+
+  <p>The fix is the Dynamo one: build the ring from every node the cluster has ever
+     verified, and apply reachability on top as a separate set. A key's replicas then do
+     not move when a node blinks — it keeps its share of the keyspace, and the writes it
+     could not take become a hint queue that drains when it returns.</p>
+
+  <figure>
+    <div class="plate"><img src="adr/write-path.svg" alt="Sequence diagram: the coordinator stamps one record, sends it to the two reachable replicas, answers ok once two acknowledge, and keeps a hint for the unreachable third, which is replayed when that node comes back" loading="lazy"></div>
+    <figcaption>A write with one replica down, and the hint that heals it later.</figcaption>
+  </figure>
+
+  <p>Same scenario afterwards: ten keys queued as hints while the node was away, replayed
+     on rejoin, 30 keys on all three nodes, queue empty, and not a single read involved.</p>
+
+  <h2>Bug two: a default argument that rebuilt the ring on every request</h2>
+
+  <p>Writing up the performance numbers meant replacing estimates with measurements, and
+     the first measurement found something embarrassing. A single-node write cost 51 µs,
+     and profiling each layer put 42 of them in one place: working out which nodes own
+     the key. That is a SHA-256 and a binary search. It should be under a microsecond.</p>
+
+<pre><code>def ring, do: :persistent_term.get(@pt_ring, empty_ring())</code></pre>
+
+  <p>Elixir evaluates arguments eagerly. <code>empty_ring()</code> builds a 128-point
+     consistent hash ring — 128 hashes and a sort — and it was being built on
+     <em>every single request</em>, as the default value for a key that was always
+     present. A lazy default:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Operation</th><th>Before</th><th>After</th></tr></thead>
+      <tbody>
+        <tr><td>Placement lookup</td><td class="num">42.19 µs</td><td class="num">0.32 µs</td></tr>
+        <tr><td><code>Kurwa.add</code></td><td class="num">51.34 µs</td><td class="num">4.88 µs</td></tr>
+        <tr><td><code>Kurwa.member?</code></td><td class="num">49.08 µs</td><td class="num">2.80 µs</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Ten times faster on the write path, from deleting one pair of parentheses' worth of
+     eagerness. It had been there since the first commit, invisible, because nothing in
+     the test suite cares how long a correct answer takes.</p>
+
+  <h2>Bug three: the number I published was wrong</h2>
+
+  <p>The HTTP gateway measured 113,000 requests per second with keep-alive and 5,900
+     without, so I wrote that connection reuse is worth 19×, and put it on the site.</p>
+
+  <p>It is worth about 4×. The 5,900 figure was taken by hand immediately after a
+     30,000-request run, and it was counting sockets stuck in <code>TIME_WAIT</code>
+     rather than anything about the server. Measured properly, from a script, on a fresh
+     node: 32,500.</p>
+
+  <blockquote>
+    <p>This is why the benchmarks now live in the repository instead of in my shell
+       history. Every number on the site and in the docs is produced by a script anyone
+       can run, and a version that is slower than the one before it is treated as a
+       broken release rather than a new baseline.</p>
+  </blockquote>
+
+  <p>The correction is still in the docs with the old figure struck through, because a
+     silently restated number is indistinguishable from a number nobody checked.</p>
+
+  <h2>What a cluster test found that a unit test could not</h2>
+
+  <p>Automating the three-node scenario turned up one more thing. A node whose BEAM was
+     killed came back with <em>nothing</em>, not with what it had: the write-ahead log
+     append was sitting in a buffer the periodic fsync had not reached yet.</p>
+
+  <p>Which means a replica falls behind in two different ways, and only one of them was
+     covered:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>How it fell behind</th><th>Who knows</th><th>What fixes it</th></tr></thead>
+      <tbody>
+        <tr><td>Unreachable when the write happened</td><td>the coordinator</td><td>hinted handoff</td></tr>
+        <tr><td>Acknowledged the write, then crashed</td><td><strong>nobody</strong></td><td>read repair only</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The second row is why there is now a setting that fsyncs every write for anyone who
+     wants the window closed, and why active anti-entropy — a background pass comparing
+     replicas with Merkle trees — is written down as the next real gap rather than left
+     as an unnoticed one. For a key-only store that hash tree is unusually cheap: the
+     leaves are the keys themselves, with no values to digest.</p>
+
+  <h2>The numbers, and where they do not apply</h2>
+
+  <p>On one laptop, all three nodes sharing the same CPU: a local membership check in
+     361 ns, a quorum across three nodes in about 46 µs, 56,000 writes and 58,000 reads
+     per second at 64 concurrent clients, 126,000 requests per second through the HTTP
+     gateway with keep-alive, and 128 bytes of RAM per key.</p>
+
+  <p>Comparing that to another store is mostly a way to mislead yourself — Redis's own
+     benchmarking guide says flatly that comparing one benchmark tool's output to
+     another's and extrapolating is pointless, and it is right. Two differences matter
+     more than the numbers: the HTTP figures are HTTP and JSON against a binary
+     protocol, and the three-node figures include a quorum with read repair that a
+     single-node store is not doing.</p>
+
+  <p>So, plainly, when not to use this:</p>
+
+  <ul>
+    <li><strong>One node.</strong> Redis wins on every axis — simpler, faster, a decade in production, an ecosystem.</li>
+    <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs about 1.2 bytes per key against 128.</li>
+    <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
+    <li><strong>The keys do not fit in RAM.</strong> Roughly 12 GB per 100 million; there is no disk engine yet.</li>
+    <li><strong>Zero hours in production.</strong> One author, no client libraries, no TLS between nodes.</li>
+  </ul>
+
+  <h2>The actual lesson</h2>
+
+  <p>Almost nothing in this is new. Consistent hashing with hinted handoff is Dynamo,
+     2007. LWW-Set is textbook CRDT. Quorums with <code>r + w &gt; n</code> are from the
+     same paper. Directories as namespaces is Plan 9 in the eighties.</p>
+
+  <p>What was worth doing was taking one constraint seriously enough to follow it all the
+     way down and see what fell out. Remove values, and the merge function disappears.
+     Remove the merge function, and the leader has nothing left to serialise. Remove the
+     leader, and a membership check is one lookup in your own process. Then the thing
+     turns out to mount as a filesystem, and set union turns out to be free.</p>
+
+  <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
+
+  <div class="end">
+    <p><strong>kurwadb</strong> is MIT-licensed, 187 tests plus 11 against three real
+       distributed nodes, and about as production-ready as that sentence implies.</p>
+    <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
+       <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·
+       <a href="https://github.com/holooloo/kurwadb/blob/main/ARCHITECTURE.md">Architecture, including what is deliberately missing</a> ·
+       <a href="/">kurwadb.dev</a></p>
+  </div>
+
+  <footer>
+    <span>MIT</span>
+    <span><a href="/">kurwadb.dev</a></span>
+    <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
+  </footer>
+
+</div>
+</body>
+</html>
