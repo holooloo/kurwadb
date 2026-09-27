@@ -61,6 +61,14 @@ end
 
 probe = Kurwa.Key.encode("order:1000001")
 
+# Warm up and discard: the first pass pays for code loading and for growing the
+# ETS tables, and reporting that as the steady state is how you publish a number
+# you later have to correct.
+for i <- 1..5_000 do
+  Kurwa.Store.get(probe)
+  Kurwa.add("warmup:#{i}")
+end
+
 IO.puts("\nwhere the time goes (single node)")
 bench.("Clock.tick", 50_000, fn _ -> Kurwa.Clock.tick() end)
 bench.("Placement.targets", 50_000, fn _ -> Kurwa.Placement.targets(probe, 3) end)

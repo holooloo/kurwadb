@@ -130,6 +130,8 @@ variables are read at boot (`config/runtime.exs`).
 | `data_dir` | `KURWA_DATA_DIR` | `data` | WAL and snapshots, scoped per node |
 | `seeds` | `KURWA_SEEDS` | `[]` | comma-separated nodes to connect to |
 | `tombstone_ttl` | `KURWA_TOMBSTONE_TTL_MS` | 24h | must exceed your longest outage |
+| `repair_interval` | | 10 min | how often anti-entropy checks one peer |
+| `repair_buckets` | | 4096 | digest vector size; must match across the cluster |
 | `wal_sync_on_write` | `KURWA_WAL_SYNC_ON_WRITE` | `false` | fsync every write; closes the crash window at a cost per write |
 | `cache` | | `false` | extractor cache; trades linearizable reads for bounded staleness |
 | `http_port` | `KURWA_HTTP_PORT` | 4040 | |
@@ -155,6 +157,7 @@ Kurwa.Extractor       cache + single-flight (pass-through unless enabled)
 Kurwa.Coordinator     leaderless quorum reads and writes, read repair
 Kurwa.Placement       which replicas own a key, and which can answer
 Kurwa.Handoff         writes a replica missed, replayed when it returns
+Kurwa.Repair          anti-entropy: finds replicas that drifted silently
 Kurwa.Cluster         membership, reachability, the ring
 Kurwa.Ring            consistent hashing
 Kurwa.Quorum          first-K-of-N fan-out

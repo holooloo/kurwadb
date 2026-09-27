@@ -265,6 +265,51 @@ defmodule Kurwa.ClusterIntegrationTest do
     TC.await(fn -> TC.local_keys(revived) == 5 end, 10_000)
   end
 
+  @tag cluster_opts: [wal_sync_interval: 60_000]
+  test "anti-entropy finds what a crash lost, with nobody reading the keys", %{
+    peers: [one, _two, three],
+    nodes: nodes,
+    dir: dir
+  } do
+    keys = for i <- 1..8, do: "silent:#{i}"
+    for key <- keys, do: assert(TC.call(one, Kurwa, :add, [key]) == :ok)
+    assert TC.local_keys(three) == 8
+
+    # Killed hard with the fsync interval pushed out of reach: this replica
+    # acknowledged all eight writes and then lost them. Nothing anywhere knows
+    # that happened - no coordinator saw a failure, so no hints exist.
+    TC.stop(three, :kill)
+    TC.await_reachability(one, 3, 2)
+
+    revived = TC.boot(:kurwa_node3, nodes, dir)
+    on_exit(fn -> TC.stop(revived) end)
+    TC.await_reachability(one, 3, 3)
+
+    assert TC.local_keys(revived) == 0
+    assert TC.call(one, Kurwa.Handoff, :depth, []) == %{}
+
+    # Not one read of these keys, so read repair has nothing to act on either.
+    assert {:ok, result} = TC.call(one, Kurwa.Repair, :run, [revived.node], 60_000)
+    assert result.diverged > 0
+    assert result.repaired > 0
+
+    assert TC.local_keys(revived) == 8
+
+    for key <- keys do
+      {:ok, record} = TC.call(revived, Kurwa.Store, :get, [Kurwa.Key.encode(key)])
+      assert Kurwa.Record.alive?(record)
+    end
+  end
+
+  test "anti-entropy is quiet when the replicas already agree", %{peers: [one, _two, three]} do
+    for i <- 1..5, do: :ok = TC.call(one, Kurwa, :add, ["agreed:#{i}"])
+
+    assert {:ok, result} = TC.call(one, Kurwa.Repair, :run, [three.node], 60_000)
+    assert result.diverged == 0
+    assert result.repaired == 0
+    assert result.keys >= 5
+  end
+
   @tag cluster_opts: [wal_sync_interval: 60_000, wal_sync_on_write: true]
   test "with an fsync on every write, a crash loses nothing", %{
     peers: [one, _two, three],

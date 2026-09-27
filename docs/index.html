@@ -600,7 +600,7 @@
         </div>
         <div class="spec">
           <dt>Self-healing</dt>
-          <dd>A node that was away keeps its share of the ring; the writes it missed are replayed when it returns. Nobody asks the beaver to repair the dam — it just turns up with the logs.</dd>
+          <dd>A node that was away keeps its share of the ring and the writes it missed are replayed when it returns — and a background pass compares replicas and fixes what drifted even when nobody read the keys. Nobody asks the beaver to repair the dam; it turns up with the logs.</dd>
         </div>
         <div class="spec">
           <dt>Error ≠ absent</dt>
@@ -652,14 +652,15 @@
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.2.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.3.0</th></tr></thead>
           <tbody>
             <tr><td>Local membership check</td><td class="num">361 ns</td></tr>
             <tr><td>Quorum across 3 nodes, single client</td><td class="num">~46 µs</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">56k writes/s · 58k reads/s</td></tr>
-            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">126k req/s</td></tr>
-            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">408k keys/s</td></tr>
+            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">55k writes/s · 59k reads/s</td></tr>
+            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">123k req/s</td></tr>
+            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">396k keys/s</td></tr>
             <tr><td>RAM per key</td><td class="num">128 B · 152 B</td></tr>
+            <tr><td>Anti-entropy digest, 4096 buckets</td><td class="num">32 KB</td></tr>
           </tbody>
         </table>
       </div>
@@ -737,7 +738,7 @@ curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — read from a di
 
   <footer>
     <span>MIT</span>
-    <span>187 tests, plus 11 against three real nodes</span>
+    <span>196 tests, plus 13 against three real nodes</span>
     <span><a href="article.html">The write-up</a></span>
     <span class="polish">bóbr, kurwa</span>
     <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>

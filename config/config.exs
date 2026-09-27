@@ -39,6 +39,12 @@ config :kurwadb,
   handoff_max_hints: 100_000,
   handoff_batch: 500,
 
+  # active anti-entropy: finds replicas that drifted with nobody watching.
+  # repair_buckets must match across the cluster or rounds are skipped.
+  repair_interval: 600_000,
+  repair_buckets: 4_096,
+  repair_max_buckets: 64,
+
   # gateways
   start_gateway: true,
   http_port: 4040,

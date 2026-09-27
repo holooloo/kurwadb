@@ -27,19 +27,26 @@ bench/http.sh                                      # the HTTP gateway, via Apach
 Measured on Apple M4, 10 cores, Elixir 1.20.4 / OTP 29. All three cluster nodes
 share that one machine, so the cluster figures are pessimistic: on separate
 hosts they trade CPU contention for real network latency. Each figure is a
-single run; expect a few percent of run-to-run variance, and treat a change
-smaller than that as noise rather than as a regression.
+single run unless stated. Measured variance, so that "noise" is a number rather
+than a shrug: `Store.put` moves ±10% between runs and `Kurwa.add` ±3%, while the
+HTTP figures move ±7% - the 0.3.0 HTTP column is the midpoint of two runs. Treat
+a change inside those bands as noise.
+
+**Run them on a quiet machine, one at a time.** The HTTP benchmark reads about
+30% low when it starts within a minute of the cluster benchmark, which is how
+the 0.1.0 reconnect figure came to be wrong. Both scripts now warm up and
+discard first, and `bench/http.sh` warns if another BEAM is already running.
 
 ## Storage footprint
 
 A key carries four fixed metadata fields and no value, so the cost per key does
 not grow with the cluster or with write history.
 
-| | 0.1.0 | 0.2.0 |
-|---|---|---|
-| 13-byte key | 120 B | 128 B |
-| 36-byte key | 144 B | 152 B |
-| 100M keys, projected | 11.2 – 13.4 GB | 12.0 – 14.2 GB |
+| | 0.1.0 | 0.2.0 | 0.3.0 |
+|---|---|---|---|
+| 13-byte key | 120 B | 128 B | 128 B |
+| 36-byte key | 144 B | 152 B | 152 B |
+| 100M keys, projected | 11.2 – 13.4 GB | 12.0 – 14.2 GB | 12.0 – 14.2 GB |
 
 0.2.0 gave every record an expiry field, which is one machine word per key
 whether or not the key uses it. That is the price of per-key TTL; it buys back
@@ -47,15 +54,15 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 |
-|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns |
-| `Placement.targets` | 322 ns | 316 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs |
+| | 0.1.0 | 0.2.0 | 0.3.0 |
+|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
@@ -63,21 +70,21 @@ use it nothing. Every difference in this table is inside run-to-run variance.
 
 ## Three nodes, quorum (n=3 r=2 w=2)
 
-| | 0.1.0 | 0.2.0 |
-|---|---|---|
-| `add`, single client | 46.6 µs | 45.7 µs |
-| `member?`, single client | 46.8 µs | 46.4 µs |
-| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec |
-| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec |
-| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 |
+|---|---|---|---|
+| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs |
+| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs |
+| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec |
+| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec |
+| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec |
 
 ## HTTP gateway, one node
 
-| | 0.1.0 | 0.2.0 |
-|---|---|---|
-| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec |
-| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec |
-| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 |
+|---|---|---|---|
+| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec |
+| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec |
+| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec |
 
 The struck-through figure is a bad measurement, not a slow release. It was taken
 by hand before `bench/http.sh` existed, immediately after a 30 000-request run,
@@ -87,6 +94,17 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## What 0.3.0 changed
+
+Active anti-entropy (`Kurwa.Repair`). It costs nothing on the request path by
+construction: digests are computed by folding the ETS tables from a background
+process, never maintained incrementally on write, and the tables are
+`:protected` so reading them does not touch the shards. Every figure above is
+unchanged within variance, which is the point.
+
+A round is real work, though: it folds the whole local store once per peer. The
+default interval is ten minutes and one peer per tick.
 
 ## Notes on comparing this to other stores
 

@@ -339,10 +339,23 @@ remove  →  delete</code></pre>
   </div>
 
   <p>The second row is why there is now a setting that fsyncs every write for anyone who
-     wants the window closed, and why active anti-entropy — a background pass comparing
-     replicas with Merkle trees — is written down as the next real gap rather than left
-     as an unnoticed one. For a key-only store that hash tree is unusually cheap: the
-     leaves are the keys themselves, with no values to digest.</p>
+     wants the window closed — and why the next thing built was active anti-entropy: a
+     background pass that compares replicas and repairs what it finds, whether or not
+     anybody reads the keys.</p>
+
+  <p>That part had a pleasant surprise in it. Anti-entropy is normally a Merkle tree, so
+     that two replicas holding millions of keys can compare roots and descend only where
+     they differ instead of shipping everything. With no values, the tree is not worth
+     building. A leaf digest is a hash over a handful of fixed-size fields, and the
+     entire vector of 4096 bucket digests is 32 KB — one message, one round trip, no
+     descent at all. The comparison a tree exists to avoid turns out to be cheaper than
+     the tree.</p>
+
+  <blockquote>
+    <p>The test is the scenario that motivated it: kill a node hard so it loses eight
+       writes it had already acknowledged, restart it, read nothing, run one repair
+       round. All eight come back.</p>
+  </blockquote>
 
   <h2>The numbers, and where they do not apply</h2>
 

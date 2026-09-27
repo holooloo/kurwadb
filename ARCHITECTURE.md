@@ -126,7 +126,7 @@ and either way a failed quorum is an error, never a `false`.
 
 ## Repair
 
-Two mechanisms, covering different holes:
+Three mechanisms, covering different holes:
 
 **Read repair** pushes the merged winner to any replica that answered with
 something older. It costs nothing extra - the answers are already in hand - but it
@@ -140,7 +140,28 @@ and is kicked the moment the node rejoins.
 
 Hints live in memory on the coordinating node and the queue is bounded; if the
 coordinator restarts first, or a replica is away long enough to overflow the
-queue, read repair is the remaining path. Both limits are in the moduledocs.
+queue, the third mechanism is the remaining path.
+
+**Active anti-entropy** covers what neither of those can see. Both of them are
+reactive - handoff needs a coordinator that noticed a failure, read repair needs
+somebody to read the key - so a replica that *acknowledged* a write and then lost
+it (a crash before the fsync, a restore from an old snapshot) is wrong with
+nobody aware of it. `Kurwa.Repair` goes looking: it folds the local store into a
+digest per key-hash bucket, restricted to the keys it and one peer are both
+supposed to hold, compares vectors with that peer, and swaps the contents of any
+bucket where they disagree.
+
+The usual structure here is a Merkle tree, so that replicas holding millions of
+keys exchange kilobytes instead of everything. With no values the tree is not
+worth building: a leaf digest is `phash2` over a handful of fixed-size fields,
+and the entire vector of 4096 bucket digests is 32 KB - one message, one round
+trip, no descent. The comparison a tree exists to avoid is cheaper than the tree.
+
+Digests are folded from ETS in a background process and never maintained on the
+write path, so the feature costs a write nothing; the tables are `:protected`, so
+reading them does not touch the shards either. A round is real work - one full
+fold per peer - so it runs every ten minutes against one peer at a time, and the
+number of buckets repaired per round is capped.
 
 ## Storage
 
@@ -204,11 +225,12 @@ mechanisms, and only one of them was covered:
 | how a replica falls behind | who knows | what fixes it |
 |---|---|---|
 | it was unreachable when the write happened | the coordinator | hinted handoff |
-| it acknowledged the write, then crashed before fsync | **nobody** | read repair only |
+| it acknowledged the write, then crashed before fsync | **nobody** | anti-entropy |
 
-The second row is why `wal_sync_on_write` now exists, and why active anti-entropy
-is on the list below: nothing in the system is looking for silent divergence, so
-a crash-lost write on a key nobody reads stays lost on that replica.
+The second row is why `wal_sync_on_write` exists, and it is what active
+anti-entropy was built for. There is a cluster test for exactly that scenario:
+kill a node hard so it loses writes it had already acknowledged, restart it, read
+nothing, and let one repair round put the keys back.
 
 ## Plan 9
 
@@ -324,13 +346,6 @@ each with its own semantic mismatch to manage. The recommendation is one protoco
 done properly, PostgreSQL first, point lookups and point writes only, as another
 thin frontend over `Kurwa.Extractor`. The architecture is already ready for it;
 that is the part that matters today.
-
-**Active anti-entropy.** Both repair mechanisms are reactive: handoff needs a
-coordinator that noticed, read repair needs someone to read the key. Neither goes
-looking. A background pass that compares replicas - Merkle trees over key ranges,
-the way Riak's AAE works - is what closes the "nobody knows" row in the table
-above. For a key-only store the hash tree is unusually cheap, because the leaves
-are the keys themselves with no values to digest.
 
 **Persistent hints**, and **per-set statistics**, both blocked on the same thing:
 somewhere to put data that is not a key.

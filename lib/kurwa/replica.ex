@@ -49,6 +49,14 @@ defmodule Kurwa.Replica do
   @spec local_count() :: {:ok, non_neg_integer()}
   def local_count, do: {:ok, Store.count()}
 
+  @doc "Digest vector for the keys this node shares with `peer`. See `Kurwa.Repair`."
+  @spec digest(node()) :: map()
+  defdelegate digest(peer), to: Kurwa.Repair
+
+  @doc "Records this node holds in one anti-entropy bucket."
+  @spec bucket(node(), pos_integer()) :: [Record.t()]
+  defdelegate bucket(peer, index), to: Kurwa.Repair
+
   @doc "Cheap liveness probe, also used to tell kurwadb nodes from other BEAM nodes."
   @spec ping() :: :pong
   def ping, do: :pong

@@ -17,6 +17,7 @@ defmodule Kurwa.Application do
         Kurwa.Store.Supervisor,
         Kurwa.Handoff,
         Kurwa.Cluster,
+        Kurwa.Repair,
         Kurwa.Extractor.Cache,
         Kurwa.Extractor.Flight
       ] ++ gateway() ++ ninep()
