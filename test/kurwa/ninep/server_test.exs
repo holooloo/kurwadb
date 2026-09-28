@@ -249,10 +249,35 @@ defmodule Kurwa.NineP.ServerTest do
       end
     end
 
-    test "/sets lists as empty, because sets have no existence of their own", %{socket: socket} do
+    test "/sets lists the sets that exist", %{socket: socket} do
+      set = "ninep#{System.unique_integer([:positive])}"
+      :ok = Kurwa.Namespace.add(set, "a-key")
+      Kurwa.TestHelpers.eventually(fn -> set in Kurwa.Registry.local() end)
+
       {:rwalk, _} = rpc(socket, {:twalk, 0, 1, ["sets"]})
       assert {:ropen, _, _} = rpc(socket, {:topen, 1, @oread})
-      assert {:rread, ""} = rpc(socket, {:tread, 1, 0, 8_192})
+      assert {:rread, data} = rpc(socket, {:tread, 1, 0, 65_000})
+
+      assert {:ok, stats} = Proto.decode_stats(data)
+      names = Enum.map(stats, & &1.name)
+
+      assert set in names
+      assert Enum.all?(stats, &(Bitwise.band(&1.mode, @dmdir) != 0)), "sets are directories"
+    end
+
+    test "a set can be dropped from the listing through /ctl", %{socket: socket} do
+      set = "ninepdrop#{System.unique_integer([:positive])}"
+      :ok = Kurwa.Namespace.add(set, "a-key")
+      Kurwa.TestHelpers.eventually(fn -> set in Kurwa.Registry.local() end)
+
+      {:rwalk, _} = rpc(socket, {:twalk, 0, 1, ["ctl"]})
+      {:ropen, _, _} = rpc(socket, {:topen, 1, @owrite})
+      assert {:rwrite, _} = rpc(socket, {:twrite, 1, 0, "forget-set " <> set})
+
+      Kurwa.TestHelpers.eventually(fn -> set not in Kurwa.Registry.local() end)
+
+      # the keys are untouched, only the listing forgot it
+      assert Kurwa.Namespace.member?(set, "a-key") == {:ok, true}
     end
 
     test "stats reports the node", %{socket: socket} do

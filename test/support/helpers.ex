@@ -23,6 +23,35 @@ defmodule Kurwa.TestHelpers do
     dir
   end
 
+  @doc """
+  Waits for `fun` to return a truthy value.
+
+  For the things kurwadb does deliberately off the caller's path - registering a
+  set name, draining a hint queue - where asserting immediately would be
+  asserting a race.
+  """
+  def eventually(fun, timeout \\ 2_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    poll(fun, deadline)
+  end
+
+  defp poll(fun, deadline) do
+    case fun.() do
+      falsy when falsy in [false, nil] ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          flunk_or_raise()
+        else
+          Process.sleep(25)
+          poll(fun, deadline)
+        end
+
+      truthy ->
+        truthy
+    end
+  end
+
+  defp flunk_or_raise, do: raise("kurwadb test: condition never became true")
+
   @doc "A record, with everything but the interesting field defaulted."
   def record(key, opts \\ []) do
     Record.new(

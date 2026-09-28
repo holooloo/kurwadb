@@ -101,6 +101,33 @@ defmodule Kurwa.ClusterIntegrationTest do
     for peer <- [one, two, three], do: assert(TC.call(peer, Kurwa, :fetch, [key]) == {:ok, false})
   end
 
+  test "a set created on one node is listed from another", %{peers: [one, two, three]} do
+    set = "crossnode"
+
+    assert TC.call(one, Kurwa.Namespace, :add, [set, "a-key"]) == :ok
+
+    # The name is a key like any other, so it replicates without the registry
+    # needing a protocol of its own.
+    TC.await(fn ->
+      {:ok, %{sets: sets}} = TC.call(two, Kurwa.Namespace, :list, [])
+      set in sets
+    end)
+
+    {:ok, %{sets: sets, unreachable: unreachable}} = TC.call(three, Kurwa.Namespace, :list, [])
+    assert set in sets
+    assert unreachable == %{}
+
+    # forgetting it on one node removes it cluster-wide, and leaves the keys
+    assert TC.call(three, Kurwa.Namespace, :forget, [set]) == :ok
+
+    TC.await(fn ->
+      {:ok, %{sets: sets}} = TC.call(one, Kurwa.Namespace, :list, [])
+      set not in sets
+    end)
+
+    assert TC.call(one, Kurwa.Namespace, :member?, [set, "a-key"]) == {:ok, true}
+  end
+
   test "placement does not move when a replica becomes unreachable", %{
     peers: [one, _two, three],
     nodes: nodes

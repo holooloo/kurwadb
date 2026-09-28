@@ -75,6 +75,8 @@ curl      localhost:4040/info
 | `DELETE /k/:key` | remove the key |
 | `POST /batch` | `{"op":"add"\|"member"\|"delete","keys":[...],"ttl":<seconds>}`, up to 1000 keys |
 | `PUT GET DELETE /sets/:set/k/:key` | the same three, in a named set |
+| `GET /sets` | the named sets that exist |
+| `DELETE /sets/:set` | stop listing a set; its keys stay |
 | `GET /union/k/:key?sets=a,b` | member of **any** of these sets |
 | `GET /intersection/k/:key?sets=a,b` | member of **all** of these sets |
 | `GET /count` | approximate live keys, and who reported |
@@ -158,6 +160,7 @@ Kurwa.Coordinator     leaderless quorum reads and writes, read repair
 Kurwa.Placement       which replicas own a key, and which can answer
 Kurwa.Handoff         writes a replica missed, replayed when it returns
 Kurwa.Repair          anti-entropy: finds replicas that drifted silently
+Kurwa.Registry        which named sets exist, as keys in a reserved set
 Kurwa.Cluster         membership, reachability, the ring
 Kurwa.Ring            consistent hashing
 Kurwa.Quorum          first-K-of-N fan-out

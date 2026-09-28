@@ -16,21 +16,46 @@ defmodule Kurwa.Namespace do
   `true` and `member_all?/3` at the first `false`, because in either case the
   remaining sets cannot change the answer.
 
-  There is no `count` per namespace and no listing: that would need a scan, and
-  kurwadb does not do scans. See `Kurwa.Coordinator.count/1` for the cluster-wide
-  estimate.
+  Sets can be listed (`list/1`) because their names are themselves keys in a
+  reserved set - see `Kurwa.Registry`. There is still no `count` per namespace
+  and no listing of a set's *members*: both are scans. See
+  `Kurwa.Coordinator.count/1` for the cluster-wide estimate.
   """
 
   alias Kurwa.Config
   alias Kurwa.Extractor
   alias Kurwa.Key
+  alias Kurwa.Registry
 
   @type name :: binary()
   @type result :: {:ok, boolean()} | {:error, term()}
 
-  @doc "Adds `key` to the set `name`. Takes the same options as `Kurwa.add/2`, `ttl:` included."
+  @doc """
+  Adds `key` to the set `name`. Takes the same options as `Kurwa.add/2`, `ttl:` included.
+
+  The first add to a set also records that the set exists, so `list/1` can
+  answer without a scan. That happens off the caller's path - see
+  `Kurwa.Registry`.
+  """
   @spec add(name(), binary(), keyword()) :: :ok | {:error, term()}
-  def add(name, key, opts \\ []), do: Extractor.add(key, [set: name] ++ opts)
+  def add(name, key, opts \\ []) do
+    case Extractor.add(key, [set: name] ++ opts) do
+      :ok ->
+        Registry.register(name)
+        :ok
+
+      error ->
+        error
+    end
+  end
+
+  @doc "Every set the cluster knows about, and the nodes that could not be asked."
+  @spec list(keyword()) :: {:ok, %{sets: [name()], unreachable: map()}}
+  defdelegate list(opts \\ []), to: Registry
+
+  @doc "Stops listing `name`. Its keys are untouched."
+  @spec forget(name()) :: :ok | {:error, term()}
+  defdelegate forget(name), to: Registry
 
   @doc "Removes `key` from the set `name`."
   @spec delete(name(), binary(), keyword()) :: :ok | {:error, term()}

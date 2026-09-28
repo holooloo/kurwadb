@@ -7,6 +7,12 @@ defmodule Kurwa.Coordinator do
   all replicas converge on byte-identical data instead of each inventing its own
   version.
 
+  One thing worth being explicit about: `{:error, {:quorum_not_met, _}}` means
+  the write was not acknowledged by enough replicas, **not** that nothing was
+  written. The replicas that did take it keep it. A client that retries will
+  converge on whichever write has the higher stamp, which is what last-writer-
+  wins is for; a client that treats the error as "nothing happened" is wrong.
+
   Reads merge whatever answered and repair the replicas that were behind, which
   heals a replica that answered with something stale. Read repair alone is not
   enough, though: it only reaches replicas that answered inside the quorum

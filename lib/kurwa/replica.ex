@@ -57,6 +57,10 @@ defmodule Kurwa.Replica do
   @spec bucket(node(), pos_integer()) :: [Record.t()]
   defdelegate bucket(peer, index), to: Kurwa.Repair
 
+  @doc "Set names visible in this node's copy of the registry. See `Kurwa.Registry`."
+  @spec local_sets() :: {:ok, [binary()]}
+  def local_sets, do: {:ok, Kurwa.Registry.local()}
+
   @doc "Cheap liveness probe, also used to tell kurwadb nodes from other BEAM nodes."
   @spec ping() :: :pong
   def ping, do: :pong

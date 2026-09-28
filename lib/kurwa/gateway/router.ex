@@ -8,6 +8,8 @@ defmodule Kurwa.Gateway.Router do
       DELETE /k/:key                remove the key         -> 200
       POST   /batch                 {"op":"add"|"member"|"delete","keys":[...],"ttl":<seconds>}
 
+      GET    /sets                  the named sets that exist
+      DELETE /sets/:set             stop listing a set (its keys stay)
       PUT    /sets/:set/k/:key      same three, in a named set
       GET    /sets/:set/k/:key
       DELETE /sets/:set/k/:key
@@ -66,6 +68,24 @@ defmodule Kurwa.Gateway.Router do
   delete "/k/:key" do
     with {:ok, decoded} <- decode_key(conn, key) do
       respond(conn, Kurwa.delete(decoded), %{ok: true, key: key})
+    else
+      error -> key_error(conn, error)
+    end
+  end
+
+  get "/sets" do
+    {:ok, %{sets: sets, unreachable: unreachable}} = Kurwa.Namespace.list()
+
+    json(conn, 200, %{
+      sets: sets,
+      count: length(sets),
+      unreachable: stringify_reasons(unreachable)
+    })
+  end
+
+  delete "/sets/:set" do
+    with {:ok, set} <- namespace(set) do
+      respond(conn, Kurwa.Namespace.forget(set), %{ok: true, set: set, forgotten: true})
     else
       error -> key_error(conn, error)
     end

@@ -14,7 +14,9 @@ defmodule Kurwa.Application do
 
     children =
       [
+        {Task.Supervisor, name: Kurwa.TaskSupervisor},
         Kurwa.Store.Supervisor,
+        Kurwa.Registry,
         Kurwa.Handoff,
         Kurwa.Cluster,
         Kurwa.Repair,

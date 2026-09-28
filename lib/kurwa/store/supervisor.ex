@@ -11,7 +11,8 @@ defmodule Kurwa.Store.Supervisor do
 
   @impl true
   def init(_opts) do
-    children = for index <- 0..(Config.shards() - 1), do: {Kurwa.Store.Shard, index}
+    # One past the configured count is the system shard (see Kurwa.Store).
+    children = for index <- 0..Config.shards(), do: {Kurwa.Store.Shard, index}
 
     # one_for_one: a shard that dies takes only its own partition down, and
     # recovers it from the WAL on restart.

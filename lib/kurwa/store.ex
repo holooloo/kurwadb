@@ -7,12 +7,33 @@ defmodule Kurwa.Store do
   """
 
   alias Kurwa.Config
+  alias Kurwa.Key
   alias Kurwa.Record
   alias Kurwa.Store.Shard
 
-  @doc "Which local shard holds `key`."
+  @doc """
+  Which local shard holds `key`.
+
+  System keys get a shard of their own. They replicate exactly like any other
+  key - this is purely local routing - but keeping them apart means enumerating
+  them costs the number of system keys instead of a fold over everything.
+  """
   @spec shard_for(Record.key()) :: non_neg_integer()
-  def shard_for(key) when is_binary(key), do: :erlang.phash2(key, Config.shards())
+  def shard_for(key) when is_binary(key) do
+    if Key.system?(key), do: system_shard(), else: :erlang.phash2(key, Config.shards())
+  end
+
+  @doc "The shard reserved for kurwadb's own keys. Always the last one."
+  @spec system_shard() :: non_neg_integer()
+  def system_shard, do: Config.shards()
+
+  @doc "Folds over the system shard alone, tombstones included."
+  @spec fold_system(acc, (Record.t(), acc -> acc)) :: acc when acc: term()
+  def fold_system(acc, fun) when is_function(fun, 2) do
+    engine().fold(handle(system_shard()), acc, fun)
+  rescue
+    ArgumentError -> acc
+  end
 
   @doc "Directory holding shard `index`. Node-scoped, so several nodes can share a data dir."
   @spec dir(non_neg_integer()) :: Path.t()
@@ -70,7 +91,7 @@ defmodule Kurwa.Store do
     end)
   end
 
-  defp shards, do: 0..(Config.shards() - 1)
+  defp shards, do: 0..Config.shards()
   defp engine, do: Config.engine()
   defp handle(index), do: engine().handle(Shard.name(index))
 end

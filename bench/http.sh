@@ -16,9 +16,10 @@ trap cleanup EXIT
 # Two published numbers have already been wrong because a run measured the tail
 # of whatever ran before it. This one is especially sensitive: measured within a
 # minute of the cluster benchmark it reads ~30% low.
-others=$(pgrep -f "beam.smp" | wc -l | tr -d ' ')
-if [ "$others" -gt 0 ]; then
-  echo "note: $others BEAM process(es) already running - let the machine settle first"
+# No command substitution here on purpose: pgrep exits 1 when it finds nothing,
+# and with `set -o pipefail` that took the whole script down without a word.
+if pgrep -f "beam.smp" >/dev/null 2>&1; then
+  echo "note: another BEAM is already running - let the machine settle first"
 fi
 
 mix compile >/dev/null

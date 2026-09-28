@@ -254,8 +254,31 @@ Where Plan 9 does not fit, stated plainly:
   Hence `/b64`, which is honest rather than elegant.
 * **A directory listing is a scan**, and kurwadb has no scans. `/keys`, `/b64`
   and `/sets/<set>` return an error saying so, rather than an empty listing that
-  would be a lie. `/sets` does list as empty, because a set is only a prefix on
-  its keys and there is genuinely nothing to enumerate.
+  would be a lie. `/sets` is the exception, and only because of the registry
+  below.
+
+## The set registry
+
+"Which sets exist" is enumeration, and enumeration is the thing this store
+refuses to do. The way out is not to add an index but to notice that the answer
+is itself a set: **a set name is a key, in a set**. Registry entries live in the
+reserved `_sets` namespace and replicate, merge, hand off and repair through
+exactly the same path as everything else, with no new machinery at all.
+
+The reservation is airtight rather than conventional. `Kurwa.Key.valid_name?/1`
+requires a namespace to start with a letter or digit, so `_sets` is unspellable
+through `encode/2` and nothing a caller writes can collide with it.
+
+What makes it cheap to read is one local routing decision: `Kurwa.Store` sends
+system keys to a shard of their own, so listing folds a table with one record
+per set rather than a table with every key ever written. That is the whole
+implementation - no index to keep in step, nothing to rebuild at boot.
+
+Two limits, both stated in the moduledoc rather than discovered later. A name is
+registered on the first add and stays until `forget/1`, because dropping it when
+the set empties would mean counting the set's keys. And `list/1` unions what
+every reachable node can see, reporting the nodes it could not ask, because with
+fewer replicas than nodes no single node holds the whole registry.
 
 ## The extractor
 
@@ -300,12 +323,6 @@ RAM. Two shapes fit it:
 Measured, not estimated: a key costs 120 bytes in ETS with a 13-byte key and 144
 bytes with a 36-byte one (200k keys, `:ets.info(:memory)`). So 100M keys is
 ~11 GB per node, and that is where RAM stops being the obvious answer.
-
-**A set registry.** `/sets` cannot be listed and there is no per-set count,
-because both are scans. The fix is pleasingly self-referential: keep the set
-names *as keys in a reserved set*. Listing sets then becomes a membership
-question rather than a scan, and it is also the prerequisite for anything that
-introspects a catalog.
 
 **Kurwa Proxy: native client protocols.** The idea is that a PostgreSQL, MySQL or
 MongoDB client talks to kurwadb with no adapter, over its own wire protocol. It

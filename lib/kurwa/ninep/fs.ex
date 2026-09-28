@@ -10,7 +10,7 @@ defmodule Kurwa.NineP.Fs do
       remove -> delete
 
       /ctl                write "compact" | "gc" | "sync" | "join node@host"
-                          | "forget node@host"
+                          | "forget node@host" | "forget-set <name>"
       /stats              read: local keys, lamport, members
       /ring               read: ring membership and placement settings
       /keys/<key>         the default set, key as the file name
@@ -21,8 +21,9 @@ defmodule Kurwa.NineP.Fs do
 
   * `/keys`, `/b64` and `/sets/<set>` cannot be listed. Reading them is an error
     rather than an empty directory, because an empty listing would be a lie.
-  * `/sets` lists as empty. Sets have no existence of their own - a set is
-    whichever keys carry its prefix - so there is nothing to enumerate.
+  * `/sets` does list, because a set name is itself a key in a reserved set. It
+    shows sets that have ever held a key, not sets that hold one now: forgetting
+    a set when it empties would mean counting its keys, which is a scan.
 
   This module holds no state: a fid is just a path, and the server hands it back
   on every call.
@@ -183,8 +184,13 @@ defmodule Kurwa.NineP.Fs do
      )}
   end
 
-  # Sets exist only as a prefix on their keys, so there is nothing to enumerate.
-  def contents({:dir, :sets}), do: {:dir, []}
+  # Listable, because set names are themselves keys in a reserved set, kept in a
+  # shard of their own. This is the node's own view of the registry - complete
+  # when every node holds every key, partial otherwise.
+  def contents({:dir, :sets}) do
+    {:dir, Enum.map(Kurwa.Registry.local(), &stat({:dir, {:set, &1}}))}
+  end
+
   def contents({:dir, dir}) when dir in [:keys, :b64], do: {:error, @noscan}
   def contents({:dir, {:set, _}}), do: {:error, @noscan}
   def contents({:file, :ctl}), do: {:error, "ctl is write-only"}
@@ -249,6 +255,15 @@ defmodule Kurwa.NineP.Fs do
   defp control("sync") do
     Kurwa.Store.sync()
     :ok
+  end
+
+  defp control("forget-set " <> name) do
+    name = String.trim(name)
+
+    cond do
+      not Namespace.valid_name?(name) -> {:error, "not a usable set name"}
+      true -> unwrap(Namespace.forget(name))
+    end
   end
 
   defp control("forget " <> target) do

@@ -21,6 +21,10 @@ defmodule Kurwa.Key do
   @max_name 255
   @name_pattern ~r/^[A-Za-z0-9][A-Za-z0-9_.\-]*$/
 
+  # Reserved namespaces begin with an underscore, which `valid_name?/1` rejects,
+  # so nothing a caller can spell will ever land in one.
+  @registry "_sets"
+
   @type name :: binary() | nil
   @type storage_key :: binary()
 
@@ -70,4 +74,40 @@ defmodule Kurwa.Key do
 
   @doc "Longest namespace name the prefix can hold."
   def max_name_length, do: @max_name
+
+  @doc """
+  Storage key recording that the set `name` exists.
+
+  The registry is an ordinary set whose members are set names, which is what
+  makes it replicate, merge and repair itself with no new machinery. Its
+  namespace is `_sets`, and the leading underscore is the whole guarantee:
+  `valid_name?/1` refuses it, so `encode/2` can never produce a colliding key.
+  """
+  @spec registry_key(binary()) :: storage_key()
+  def registry_key(name) when is_binary(name),
+    do: <<byte_size(@registry)::8, @registry::binary, name::binary>>
+
+  @doc "The set name a registry key records, or `:error` if it is not one."
+  @spec registry_name(storage_key()) :: {:ok, binary()} | :error
+  def registry_name(<<len::8, rest::binary>>) when len == byte_size(@registry) do
+    case rest do
+      <<@registry, name::binary>> -> {:ok, name}
+      _ -> :error
+    end
+  end
+
+  def registry_name(_), do: :error
+
+  @doc """
+  Is this a key kurwadb keeps for itself?
+
+  Used to route system keys to their own shard, so that listing them costs the
+  number of sets rather than the number of keys.
+  """
+  @spec system?(storage_key()) :: boolean()
+  def system?(<<len::8, rest::binary>>) when len == byte_size(@registry) do
+    match?(<<@registry, _::binary>>, rest)
+  end
+
+  def system?(_), do: false
 end

@@ -42,11 +42,11 @@ discard first, and `bench/http.sh` warns if another BEAM is already running.
 A key carries four fixed metadata fields and no value, so the cost per key does
 not grow with the cluster or with write history.
 
-| | 0.1.0 | 0.2.0 | 0.3.0 |
-|---|---|---|---|
-| 13-byte key | 120 B | 128 B | 128 B |
-| 36-byte key | 144 B | 152 B | 152 B |
-| 100M keys, projected | 11.2 – 13.4 GB | 12.0 – 14.2 GB | 12.0 – 14.2 GB |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
+|---|---|---|---|---|
+| 13-byte key | 120 B | 128 B | 128 B | 128 B |
+| 36-byte key | 144 B | 152 B | 152 B | 152 B |
+| 100M keys, projected | 11.2 – 13.4 GB | 12.0 – 14.2 GB | 12.0 – 14.2 GB | 12.0 – 14.2 GB |
 
 0.2.0 gave every record an expiry field, which is one machine word per key
 whether or not the key uses it. That is the price of per-key TTL; it buys back
@@ -54,15 +54,15 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 | 0.3.0 |
-|---|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns | 26 ns |
-| `Placement.targets` | 322 ns | 316 ns | 311 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
+|---|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
@@ -70,21 +70,21 @@ use it nothing. Every difference in this table is inside run-to-run variance.
 
 ## Three nodes, quorum (n=3 r=2 w=2)
 
-| | 0.1.0 | 0.2.0 | 0.3.0 |
-|---|---|---|---|
-| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs |
-| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs |
-| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec |
-| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec |
-| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
+|---|---|---|---|---|
+| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs |
+| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs |
+| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec |
+| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec |
+| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec |
 
 ## HTTP gateway, one node
 
-| | 0.1.0 | 0.2.0 | 0.3.0 |
-|---|---|---|---|
-| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec |
-| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec |
-| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
+|---|---|---|---|---|
+| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec | 119 000 req/sec |
+| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec | 33 400 req/sec |
+| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec | 3 967 req/sec — 396 700 keys/sec |
 
 The struck-through figure is a bad measurement, not a slow release. It was taken
 by hand before `bench/http.sh` existed, immediately after a 30 000-request run,
@@ -94,6 +94,14 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## What 0.4.0 changed
+
+The set registry. System keys now route to a shard of their own, which adds one
+prefix check per operation and one more shard to the supervision tree - both
+free at this resolution, and the column above is unchanged or slightly better.
+Registering a set name is a second quorum write, so it happens off the caller's
+path and only once per set per node.
 
 ## What 0.3.0 changed
 
