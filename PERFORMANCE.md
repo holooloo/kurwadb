@@ -54,15 +54,15 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
-|---|---|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns |
-| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 |
+|---|---|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
@@ -94,6 +94,43 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## The two engines
+
+0.5.0 added `Kurwa.Store.Lsm`, for when the keys stop fitting in memory. Both
+engines answer the same contract - the whole test suite runs against either:
+
+```sh
+mix test                        # the ETS engine
+KURWA_TEST_ENGINE=lsm mix test  # the on-disk one
+```
+
+200 000 keys with 13-byte names, everything flushed to disk
+(`MIX_ENV=test mix run --no-start bench/engines.exs`):
+
+| | ETS | LSM |
+|---|---|---|
+| resident, per key | 128.1 B | **3.01 B** |
+| resident, total | 24.4 MB | 0.57 MB |
+| on disk | — | 14.0 MB |
+| `get`, key present | 1.15 µs | 11.8 µs |
+| `get`, key absent | 1.15 µs | **0.38 µs** |
+
+Two things to read out of that table. The same machine holds **43× more keys**,
+because what stays in RAM is a Bloom filter and a sparse index rather than the
+keys. And a miss is *faster* than the ETS engine, because the filter answers it
+from memory without a seek - which is the common case for the jobs this store is
+for, where the question is usually "no, not seen".
+
+The `get` figures here are random keys over a 200k table, so they include cache
+misses; the 349 ns in the table above is the same key read repeatedly, which is
+the hot path, not the whole story.
+
+## What 0.5.0 changed
+
+The LSM engine, and nothing on the ETS path: the shard now passes two more
+options that the ETS engine ignores. The column above is unchanged within
+variance.
 
 ## What 0.4.0 changed
 

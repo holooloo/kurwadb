@@ -206,7 +206,7 @@ defmodule Kurwa.Gateway.RouterTest do
     assert body["members"] == [to_string(node())]
     assert body["n"] == 1
     assert body["shards"] == 2
-    assert body["engine"] == "Kurwa.Store.Ets"
+    assert body["engine"] == inspect(Kurwa.Config.engine())
   end
 
   test "health is up while the node is in its own ring" do

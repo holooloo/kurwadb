@@ -29,11 +29,13 @@ this event", seen-URL frontiers.
 
 ## Status
 
-Working, with 168 unit tests and 10 cluster tests.
+Working, with 240 unit tests and 14 cluster tests — and both storage engines
+pass the same suite.
 
 ```sh
-mix test                      # 168 tests, ~1s
-mix test --include cluster    # 10 more, ~6s: three real nodes, three real BEAMs
+mix test                          # 240 tests, ~3s
+mix test --include cluster        # 14 more, ~9s: three real nodes, three real BEAMs
+KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 ```
 
 The cluster tests boot actual distributed nodes and assert the guarantees this
@@ -130,6 +132,7 @@ variables are read at boot (`config/runtime.exs`).
 | `vnodes` | `KURWA_VNODES` | 128 | ring points per node |
 | `shards` | `KURWA_SHARDS` | 8 | local ETS tables, for write concurrency |
 | `data_dir` | `KURWA_DATA_DIR` | `data` | WAL and snapshots, scoped per node |
+| `engine` | `KURWA_ENGINE` | `Kurwa.Store.Ets` | `lsm` switches to the on-disk engine |
 | `seeds` | `KURWA_SEEDS` | `[]` | comma-separated nodes to connect to |
 | `tombstone_ttl` | `KURWA_TOMBSTONE_TTL_MS` | 24h | must exceed your longest outage |
 | `repair_interval` | | 10 min | how often anti-entropy checks one peer |
@@ -165,7 +168,9 @@ Kurwa.Cluster         membership, reachability, the ring
 Kurwa.Ring            consistent hashing
 Kurwa.Quorum          first-K-of-N fan-out
 Kurwa.Store           local shards
-Kurwa.Store.Engine    storage behaviour; ETS + WAL is one implementation
+Kurwa.Store.Engine    storage behaviour, with two implementations
+Kurwa.Store.Ets       every key in memory; the default
+Kurwa.Store.Lsm       memtable plus sorted tables on disk, ~3 B of RAM per key
 Kurwa.Gateway         HTTP
 Kurwa.NineP           9P2000
 ```

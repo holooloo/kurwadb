@@ -360,9 +360,22 @@ remove  →  delete</code></pre>
   <h2>The numbers, and where they do not apply</h2>
 
   <p>On one laptop, all three nodes sharing the same CPU: a local membership check in
-     361 ns, a quorum across three nodes in about 46 µs, 56,000 writes and 58,000 reads
-     per second at 64 concurrent clients, 126,000 requests per second through the HTTP
+     349 ns, a quorum across three nodes in about 42 µs, 57,000 writes and 61,000 reads
+     per second at 64 concurrent clients, 119,000 requests per second through the HTTP
      gateway with keep-alive, and 128 bytes of RAM per key.</p>
+
+  <p>That last number is the one that decides how much a machine can hold, which is why
+     there is now a second engine. It keeps recent keys in memory and older ones in
+     immutable sorted files, with nothing in RAM per table but a Bloom filter and a
+     sparse index — three bytes per key rather than 128, so the same machine holds
+     about 43 times more. The filter is what makes that work, and it pays off in the
+     direction that matters: a key that <em>is</em> there costs a seek at 11.8 µs, and a
+     key that is not is answered from memory in 380 nanoseconds, faster than the
+     in-memory engine manages. For a store whose usual answer is "no, not seen", the
+     common case is the fast one.</p>
+
+  <p>Both engines answer the same behaviour contract, and the way that is checked is by
+     running the entire test suite against each of them rather than asserting it.</p>
 
   <p>Comparing that to another store is mostly a way to mislead yourself — Redis's own
      benchmarking guide says flatly that comparing one benchmark tool's output to
@@ -377,7 +390,7 @@ remove  →  delete</code></pre>
     <li><strong>One node.</strong> Redis wins on every axis — simpler, faster, a decade in production, an ecosystem.</li>
     <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs about 1.2 bytes per key against 128.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
-    <li><strong>The keys do not fit in RAM.</strong> Roughly 12 GB per 100 million; there is no disk engine yet.</li>
+    <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>
     <li><strong>Zero hours in production.</strong> One author, no client libraries, no TLS between nodes.</li>
   </ul>
 

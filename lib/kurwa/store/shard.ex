@@ -56,10 +56,14 @@ defmodule Kurwa.Store.Shard do
     engine = Config.engine()
     dir = Kurwa.Store.dir(index)
 
+    # Every engine option, whichever engine is configured: an engine ignores
+    # the ones it has no use for.
     opts = [
       dir: dir,
       snapshot_after: Config.get(:wal_snapshot_after),
-      sync_on_write: Config.get(:wal_sync_on_write)
+      sync_on_write: Config.get(:wal_sync_on_write),
+      memtable_keys: Config.get(:lsm_memtable_keys),
+      max_tables: Config.get(:lsm_max_tables)
     ]
 
     case engine.open(name(index), opts) do

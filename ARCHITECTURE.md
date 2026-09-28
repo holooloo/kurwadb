@@ -170,8 +170,9 @@ engine state and only ever run in the owning shard process, while read callbacks
 take a cheap process-independent handle. That is why a local membership check is
 one `:ets.lookup` in the caller and not a `GenServer.call`.
 
-`Kurwa.Store.Ets` is the engine today: an ETS set per shard plus an append-only
-log.
+There are two engines. `Kurwa.Store.Ets` keeps every key in an ETS set per shard
+plus an append-only log, and is the default because nothing beats it while the
+keys fit in memory. `Kurwa.Store.Lsm` is for when they stop fitting.
 
 ```
 snapshot   every live record at the last compaction
@@ -257,6 +258,39 @@ Where Plan 9 does not fit, stated plainly:
   would be a lie. `/sets` is the exception, and only because of the registry
   below.
 
+## The on-disk engine
+
+`Kurwa.Store.Lsm` is log-structured: recent keys in a memtable with its WAL,
+older ones in immutable sorted tables. What stays in RAM per table is a Bloom
+filter and a sparse index - about 3 bytes per key measured, against 128 in ETS,
+so the same machine holds roughly 43× more.
+
+The Bloom filter is not an optimisation here, it is the read path. "Is this key
+here" is the only question this store ever asks, and a filter answers it from
+memory, wrong in one direction only. Measured on 200k keys: a present key costs
+11.8 µs (a seek), an absent one 0.38 µs and no seek at all - *faster* than the
+ETS engine, which is the right way round for a store whose usual answer is "not
+seen".
+
+Two design points that are not obvious:
+
+**Reads merge, they do not take the newest hit.** A write that arrives with an
+older stamp after its key was flushed lands in an empty memtable, so the newest
+place a key appears is not always the winning version. `Record.merge/2` settles
+it - the same function that settles a disagreement between replicas. Writes read
+first for the same reason, which the filters make cheap for keys that are new.
+
+**Compaction streams.** `SSTable.merge/3` pushes records at a fold and the table
+writer is that fold, so merging tables larger than memory holds nothing but the
+cursors. The first version of this collected the merge into a list, which would
+have quietly capped the engine at what fits in RAM - the thing it exists to
+avoid.
+
+`count/1` is an over-estimate on this engine: a key in both a table and the
+memtable counts twice until they merge. The ETS engine's count is exact. Both
+answer the same behaviour contract otherwise, and the way that is checked is by
+running the entire suite against each (`KURWA_TEST_ENGINE=lsm mix test`).
+
 ## The set registry
 
 "Which sets exist" is enumeration, and enumeration is the thing this store
@@ -310,19 +344,14 @@ fallbacks would write to a substitute node immediately, which means hints have t
 live with the data on the fallback rather than on the coordinator. That also
 makes hints survive a coordinator restart.
 
-**A disk engine.** The `Engine` behaviour exists so the store is not married to
-RAM. Two shapes fit it:
+**Levelled compaction.** The LSM engine merges all its tables into one when it
+has too many, which is size-tiered in the crudest form: simple, and it rewrites
+more than it needs to. Levels would bound the write amplification.
 
-* An **LSM** (memtable, SSTables, bloom filters, compaction). For a key-only
-  store the bloom filter is not an optimisation but the whole read path - "is this
-  key here" is answered in memory and never touches the disk in the common case.
-* **Venti**'s arena plus index. Venti is write-once, SHA-1-addressed block
-  storage - the "key = hash(value)" model - and its arena (append-only) plus
-  separate index layout is a good blueprint for immutable on-disk sets.
-
-Measured, not estimated: a key costs 120 bytes in ETS with a 13-byte key and 144
-bytes with a 36-byte one (200k keys, `:ets.info(:memory)`). So 100M keys is
-~11 GB per node, and that is where RAM stops being the obvious answer.
+**A Venti-shaped engine.** Venti is write-once, SHA-1-addressed block storage -
+the "key = hash(value)" model - and its arena plus separate index is a different
+blueprint for immutable on-disk sets than the LSM one, worth having if content
+addressing ever becomes the point.
 
 **Kurwa Proxy: native client protocols.** The idea is that a PostgreSQL, MySQL or
 MongoDB client talks to kurwadb with no adapter, over its own wire protocol. It

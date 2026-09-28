@@ -26,6 +26,10 @@ config :kurwadb,
   data_dir: "data",
   wal_sync_interval: 100,
   wal_sync_on_write: false,
+
+  # only read by Kurwa.Store.Lsm, the on-disk engine
+  lsm_memtable_keys: 100_000,
+  lsm_max_tables: 8,
   wal_snapshot_after: 100_000,
   tombstone_ttl: 86_400_000,
   gc_interval: 300_000,

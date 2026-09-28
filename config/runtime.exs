@@ -27,6 +27,8 @@ if config_env() != :test do
     ninep_port: int.("KURWA_9P_PORT", 564),
     cache: System.get_env("KURWA_CACHE") in ~w(1 true),
     wal_sync_on_write: System.get_env("KURWA_WAL_SYNC_ON_WRITE") in ~w(1 true),
+    engine:
+      if(System.get_env("KURWA_ENGINE") == "lsm", do: Kurwa.Store.Lsm, else: Kurwa.Store.Ets),
     auth_token: System.get_env("KURWA_AUTH_TOKEN"),
     tombstone_ttl: int.("KURWA_TOMBSTONE_TTL_MS", 86_400_000),
     seeds: seeds
