@@ -220,6 +220,37 @@ defmodule Kurwa.ClusterIntegrationTest do
     )
   end
 
+  test "hints survive the restart of the node holding them", %{
+    peers: [one, two, three],
+    nodes: nodes,
+    dir: dir
+  } do
+    TC.stop(three, :graceful)
+    TC.await_reachability(one, 3, 2)
+
+    keys = for i <- 1..5, do: "owed:#{i}"
+    for key <- keys, do: assert(TC.call(one, Kurwa, :add, [key]) == :ok)
+    assert TC.call(one, Kurwa.Handoff, :depth, [])[three.node] == 5
+
+    # The coordinator itself goes down, still owing those five writes.
+    TC.stop(one, :graceful)
+    TC.await_reachability(two, 3, 1)
+
+    revived_one = TC.boot(:kurwa_node1, nodes, dir)
+    on_exit(fn -> TC.stop(revived_one) end)
+    TC.await_reachability(revived_one, 3, 2)
+
+    # They were written to its own store, so they came back with it.
+    assert TC.call(revived_one, Kurwa.Handoff, :depth, [])[three.node] == 5
+
+    revived_three = TC.boot(:kurwa_node3, nodes, dir)
+    on_exit(fn -> TC.stop(revived_three) end)
+    TC.await_reachability(revived_one, 3, 3)
+
+    TC.await(fn -> TC.local_keys(revived_three) == 5 end, 15_000)
+    TC.await(fn -> TC.call(revived_one, Kurwa.Handoff, :depth, []) == %{} end, 15_000)
+  end
+
   test "a quorum that cannot be met is an error, not a false", %{peers: [one, two, three]} do
     :ok = TC.call(one, Kurwa, :add, ["survivor"])
 

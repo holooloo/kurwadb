@@ -63,10 +63,17 @@ defmodule Kurwa.Store do
     ArgumentError -> {:error, :unavailable}
   end
 
-  @doc "Local live keys across all shards."
+  @doc """
+  Local live keys across all shards.
+
+  The system shard is left out: registry entries and pending hints are
+  bookkeeping, not keys anybody stored.
+  """
   @spec count() :: non_neg_integer()
   def count do
-    Enum.reduce(shards(), 0, fn index, acc -> acc + engine().count(handle(index)) end)
+    Enum.reduce(0..(Config.shards() - 1), 0, fn index, acc ->
+      acc + engine().count(handle(index))
+    end)
   rescue
     ArgumentError -> 0
   end

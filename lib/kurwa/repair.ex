@@ -43,6 +43,7 @@ defmodule Kurwa.Repair do
 
   alias Kurwa.Cluster
   alias Kurwa.Config
+  alias Kurwa.Key
   alias Kurwa.Record
   alias Kurwa.Ring
   alias Kurwa.Store
@@ -242,8 +243,14 @@ defmodule Kurwa.Repair do
     me = node()
 
     fn key ->
-      prefs = Ring.preflist(ring, key, n)
-      me in prefs and (peer == me or peer in prefs)
+      # A hint records what this node owes someone else; it is nobody else's
+      # business and must never be compared or exchanged.
+      if Key.local_only?(key) do
+        false
+      else
+        prefs = Ring.preflist(ring, key, n)
+        me in prefs and (peer == me or peer in prefs)
+      end
     end
   end
 

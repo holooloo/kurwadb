@@ -61,6 +61,10 @@ defmodule Kurwa.Replica do
   @spec local_sets() :: {:ok, [binary()]}
   def local_sets, do: {:ok, Kurwa.Registry.local()}
 
+  @doc "Every node this one knows about, reachable or not. See `Kurwa.Cluster`."
+  @spec members() :: {:ok, [node()]}
+  def members, do: {:ok, Kurwa.Cluster.members()}
+
   @doc "Cheap liveness probe, also used to tell kurwadb nodes from other BEAM nodes."
   @spec ping() :: :pong
   def ping, do: :pong

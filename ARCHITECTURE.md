@@ -102,8 +102,13 @@ and its missed writes become a hint list. A node leaves the ring only when an
 operator says so (`Kurwa.Cluster.forget/1`).
 
 Membership comes from Erlang distribution: `:net_kernel.monitor_nodes` plus a
-`ping` check, so unrelated BEAM nodes cannot join the ring. No gossip protocol,
-because distribution already gives a full mesh and up/down events. The ring lives
+`ping` check, so unrelated BEAM nodes cannot join the ring. Membership is also
+*learned*: on reaching a peer, a node takes that peer's member list and adds
+what is new as known-but-unreachable. Without that a restarted node remembers
+only the nodes it could reach at that moment, builds its ring over a smaller
+cluster than its peers, and places the same key on different replicas than they
+do. It also means one seed is enough to join - the rest of the cluster arrives
+with the first answer. The ring lives
 in `:persistent_term`, which is exactly the right structure for something read on
 every request and written on membership change.
 
@@ -138,9 +143,22 @@ of its replicas leaves that record in a per-node queue, merged by the same LWW
 rule so a key written a hundred times replays once. The queue drains on a timer
 and is kicked the moment the node rejoins.
 
-Hints live in memory on the coordinating node and the queue is bounded; if the
-coordinator restarts first, or a replica is away long enough to overflow the
-queue, the third mechanism is the remaining path.
+Hints are durable. Each one is an ordinary record in the local store, so it goes
+through the same write-ahead log as the data and survives a restart of the node
+holding it; the in-memory queues are a working set rebuilt at boot, not the only
+copy. The durable write happens in the caller's process, so a replica that is
+away during heavy writing cannot turn the handoff process into a bottleneck.
+
+Two details that are easy to get wrong. The original's own liveness lives in the
+hint *key*, because the record's `alive?` already means "still owed" - keeping
+both there would make a hint for a delete indistinguishable from a hint already
+handed over. And delivery clears both liveness variants of the key, because an
+add followed by a delete leaves two durable hints while the queue, which dedupes
+by the original key, only hands over the newer one. That second one was a flaky
+test before it was a fix.
+
+The queue is still bounded (`handoff_max_hints`); a replica away long enough to
+overflow it needs anti-entropy, not an ever-growing queue.
 
 **Active anti-entropy** covers what neither of those can see. Both of them are
 reactive - handoff needs a coordinator that noticed a failure, read repair needs
@@ -344,6 +362,16 @@ fallbacks would write to a substitute node immediately, which means hints have t
 live with the data on the fallback rather than on the coordinator. That also
 makes hints survive a coordinator restart.
 
+**Fallback vnodes.** A write still goes only to the reachable primaries, so
+while a replica is down the write has `n-1` copies on replicas plus a durable
+hint on the coordinator. Writing to a substitute node would give it `n`
+immediately, at the cost of the hint having to live with the data on the
+fallback and hand itself off from there.
+
+**A forget that sticks.** `Cluster.forget/1` removes a node locally, but a peer
+that has not forgotten it will teach it back on the next exchange. Making it
+stick needs a tombstone for membership, the same way a deleted key needs one.
+
 **Levelled compaction.** The LSM engine merges all its tables into one when it
 has too many, which is size-tiered in the crudest form: simple, and it rewrites
 more than it needs to. Levels would bound the write amplification.
@@ -393,5 +421,5 @@ done properly, PostgreSQL first, point lookups and point writes only, as another
 thin frontend over `Kurwa.Extractor`. The architecture is already ready for it;
 that is the part that matters today.
 
-**Persistent hints**, and **per-set statistics**, both blocked on the same thing:
-somewhere to put data that is not a key.
+**Per-set statistics**, blocked on the thing this store does not do: counting a
+set's members is a scan.

@@ -95,6 +95,95 @@ defmodule Kurwa.HandoffTest do
     assert Handoff.depth() == before
   end
 
+  describe "durability" do
+    test "a hint key round-trips, carrying the original's liveness", %{absent: absent} do
+      key = Key.encode(unique_key("rt"))
+
+      for alive? <- [true, false] do
+        hint = Key.hint_key(absent, key, alive?)
+        assert Key.hint_parts(hint) == {:ok, absent, key, alive?}
+        assert Key.system?(hint)
+        assert Key.local_only?(hint), "hints belong to this node alone"
+      end
+
+      refute Key.local_only?(Key.registry_key("alpha")), "registry entries do replicate"
+      assert Key.hint_parts(Key.registry_key("alpha")) == :error
+    end
+
+    test "hints survive the process that was holding them", %{absent: absent} do
+      :ok = Handoff.store(absent, record(unique_key("durable")))
+      :ok = Handoff.store(absent, record(unique_key("durable")))
+      assert Handoff.depth()[absent] == 2
+
+      restart_handoff()
+
+      assert Handoff.depth()[absent] == 2, "hints were only in memory"
+    end
+
+    test "delivered hints do not come back", %{absent: _absent} do
+      key = unique_key("delivered")
+      :ok = Handoff.store(node(), Record.new(Key.encode(key), 1, node(), true))
+      Handoff.drain()
+
+      restart_handoff()
+
+      refute Map.has_key?(Handoff.depth(), node())
+    end
+
+    test "a hint for a delete replays as a delete, not as an add" do
+      # The reason the original's liveness lives in the key: on the record,
+      # `alive?` already means "still owed".
+      key = unique_key("hinted-delete")
+      storage_key = Key.encode(key)
+
+      {:ok, _} = Store.put(Record.new(storage_key, 1, node(), true))
+      assert Store.get(storage_key) |> elem(1) |> Record.alive?()
+
+      :ok = Handoff.store(node(), Record.new(storage_key, 5, node(), false))
+      restart_handoff()
+
+      Handoff.drain()
+
+      assert {:ok, stored} = Store.get(storage_key)
+      refute Record.alive?(stored), "the replayed hint should have deleted the key"
+      assert Record.lamport(stored) == 5
+    end
+
+    test "an add then a delete of one key leaves nothing behind once handed over" do
+      # The original's liveness is part of the hint key, so this key has two
+      # durable hints while the queue - which dedupes by the original key - only
+      # hands over the newer one. Delivery has to clear both, or the older
+      # variant is replayed after every restart forever.
+      key = unique_key("add-then-delete")
+      storage_key = Key.encode(key)
+
+      :ok = Handoff.store(node(), Record.new(storage_key, 1, node(), true))
+      :ok = Handoff.store(node(), Record.new(storage_key, 7, node(), false))
+      Handoff.drain()
+
+      restart_handoff()
+
+      refute Map.has_key?(Handoff.depth(), node())
+    end
+
+    test "pending hints are not counted as keys anybody stored", %{absent: absent} do
+      before = Store.count()
+      for _ <- 1..5, do: Handoff.store(absent, record(unique_key("uncounted")))
+
+      assert Handoff.depth()[absent] >= 5
+      assert Store.count() == before, "bookkeeping is not data"
+    end
+  end
+
+  # Through the supervisor, not with a kill: three deliberate crashes inside one
+  # test module trip max_restarts and take the whole application down with
+  # them, which shows up as most of the suite failing for no visible reason.
+  defp restart_handoff do
+    :ok = Supervisor.terminate_child(Kurwa.Supervisor, Kurwa.Handoff)
+    {:ok, _pid} = Supervisor.restart_child(Kurwa.Supervisor, Kurwa.Handoff)
+    :ok
+  end
+
   defp record(key, opts \\ []) do
     Record.new(
       Key.encode(key),

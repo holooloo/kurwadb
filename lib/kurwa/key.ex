@@ -24,6 +24,7 @@ defmodule Kurwa.Key do
   # Reserved namespaces begin with an underscore, which `valid_name?/1` rejects,
   # so nothing a caller can spell will ever land in one.
   @registry "_sets"
+  @hint "_hint"
 
   @type name :: binary() | nil
   @type storage_key :: binary()
@@ -101,13 +102,62 @@ defmodule Kurwa.Key do
   @doc """
   Is this a key kurwadb keeps for itself?
 
-  Used to route system keys to their own shard, so that listing them costs the
-  number of sets rather than the number of keys.
+  Any namespace starting with an underscore is reserved, which `valid_name?/1`
+  makes unreachable from outside. System keys route to a shard of their own, so
+  that walking them costs their own number rather than the number of keys.
   """
   @spec system?(storage_key()) :: boolean()
-  def system?(<<len::8, rest::binary>>) when len == byte_size(@registry) do
-    match?(<<@registry, _::binary>>, rest)
+  def system?(<<len::8, ?_, _rest::binary>>) when len > 0, do: true
+  def system?(_), do: false
+
+  @doc """
+  Storage key for a write that `target` was not around to take.
+
+  A hint is an ordinary record: this key says who owes it and for what, and the
+  record's own fields are the original's, so replaying it reconstructs the write
+  exactly rather than approximately. Being an ordinary record is also what makes
+  it durable - it goes through the same WAL as everything else.
+
+  The original's own `alive?` lives in the key rather than in the record,
+  because the record's `alive?` has a job of its own: `true` means the hint is
+  still owed, `false` means it has been delivered. Keeping the original there
+  too would make a hint for a *delete* indistinguishable from a hint that has
+  already been handed over.
+  """
+  @spec hint_key(node(), storage_key(), boolean()) :: storage_key()
+  def hint_key(target, storage_key, original_alive?)
+      when is_atom(target) and is_binary(storage_key) and is_boolean(original_alive?) do
+    name = Atom.to_string(target)
+    flag = if original_alive?, do: 1, else: 0
+
+    <<byte_size(@hint)::8, @hint::binary, flag::8, byte_size(name)::8, name::binary,
+      storage_key::binary>>
   end
 
-  def system?(_), do: false
+  @doc "Splits a hint key back into `{target, storage_key, original_alive?}`."
+  @spec hint_parts(storage_key()) :: {:ok, node(), storage_key(), boolean()} | :error
+  def hint_parts(<<len::8, rest::binary>>) when len == byte_size(@hint) do
+    case rest do
+      <<@hint, flag::8, name_len::8, name::binary-size(name_len), storage_key::binary>> ->
+        {:ok, String.to_atom(name), storage_key, flag == 1}
+
+      _ ->
+        :error
+    end
+  end
+
+  def hint_parts(_), do: :error
+
+  @doc """
+  Is this key this node's own business, never to be replicated or compared?
+
+  Hints are: they record what *this* node owes someone else. Registry entries
+  are not - they are ordinary replicated data that happens to live in a reserved
+  namespace.
+  """
+  @spec local_only?(storage_key()) :: boolean()
+  def local_only?(<<len::8, rest::binary>>) when len == byte_size(@hint),
+    do: match?(<<@hint, _::binary>>, rest)
+
+  def local_only?(_), do: false
 end

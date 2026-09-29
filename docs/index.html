@@ -600,14 +600,14 @@
         </div>
         <div class="spec">
           <dt>Self-healing</dt>
-          <dd>A node that was away keeps its share of the ring and the writes it missed are replayed when it returns — and a background pass compares replicas and fixes what drifted even when nobody read the keys. Nobody asks the beaver to repair the dam; it turns up with the logs.</dd>
+          <dd>A node that was away keeps its share of the ring, and the writes it missed are kept durably and replayed when it returns — and a background pass compares replicas and fixes what drifted even when nobody read the keys. Nobody asks the beaver to repair the dam; it turns up with the logs.</dd>
         </div>
         <div class="spec">
           <dt>Error ≠ absent</dt>
           <dd>An unreachable quorum is a <code>503</code>, never a <code>false</code>. This is exactly where cache-based deduplication lies to you.</dd>
         </div>
         <div class="spec">
-          <dt>349 ns</dt>
+          <dt>364 ns</dt>
           <dd>A local membership check is one <code>:ets.lookup</code> in the caller's own process — no mailbox, no copy.</dd>
         </div>
         <div class="spec">
@@ -658,9 +658,9 @@
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.5.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.6.0</th></tr></thead>
           <tbody>
-            <tr><td>Local membership check</td><td class="num">349 ns</td></tr>
+            <tr><td>Local membership check</td><td class="num">364 ns</td></tr>
             <tr><td>Quorum across 3 nodes, single client</td><td class="num">~42 µs</td></tr>
             <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">57k writes/s · 61k reads/s</td></tr>
             <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">119k req/s</td></tr>
@@ -745,7 +745,7 @@ curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — read from a di
 
   <footer>
     <span>MIT</span>
-    <span>240 tests, plus 14 against three real nodes, on both engines</span>
+    <span>246 tests, plus 15 against three real nodes, on both engines</span>
     <span><a href="article.html">The write-up</a></span>
     <span class="polish">bóbr, kurwa</span>
     <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>

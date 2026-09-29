@@ -11,20 +11,30 @@ defmodule Kurwa.Handoff do
   as the store, so a key written a hundred times while a replica was away replays
   once, with the newest version.
 
-  Two limits, stated rather than implied:
+  Hints are durable. Each one is written to the local store as an ordinary
+  record whose key says who owes it and for what, so it goes through the same
+  write-ahead log as everything else and survives a restart of this node. The
+  in-memory queues are a working set rebuilt from the store at boot, not the
+  only copy.
 
-  * hints live in memory on the coordinating node. If that node restarts before
-    it drains them, they are gone and read repair is the only remaining path.
-  * a queue is bounded (`handoff_max_hints`). Once it is full, new hints for that
-    node are refused and logged - a replica that has been away long enough to
-    overflow needs a real repair pass, not an ever-growing queue.
+  The durable write happens in the caller's process, not in this one: a node
+  that is away during heavy writing would otherwise turn this process into the
+  bottleneck for every write that misses it.
+
+  One limit, stated rather than implied: a queue is bounded
+  (`handoff_max_hints`). Once it is full, new hints for that node are refused
+  and logged - a replica away long enough to overflow needs anti-entropy, not an
+  ever-growing queue.
   """
 
   use GenServer
 
   alias Kurwa.Cluster
+  alias Kurwa.Clock
   alias Kurwa.Config
+  alias Kurwa.Key
   alias Kurwa.Record
+  alias Kurwa.Store
 
   require Logger
 
@@ -32,9 +42,17 @@ defmodule Kurwa.Handoff do
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: @name)
 
-  @doc "Remembers `record` for `node`, to be replayed when it is reachable."
+  @doc """
+  Remembers `record` for `node`, to be replayed when it is reachable.
+
+  The durable part happens here, in the calling process, so that a burst of
+  writes missing one replica does not queue up behind a single process.
+  """
   @spec store(node(), Record.t()) :: :ok
-  def store(node, record), do: GenServer.cast(@name, {:store, node, record})
+  def store(node, record) do
+    _ = Store.put(persistent_form(node, record))
+    GenServer.cast(@name, {:store, node, record})
+  end
 
   @doc "Remembers `record` for several nodes at once."
   @spec store_all([node()], Record.t()) :: :ok
@@ -56,7 +74,30 @@ defmodule Kurwa.Handoff do
   @impl true
   def init(_opts) do
     schedule()
-    {:ok, %{queues: %{}, refused: %{}}}
+    {:ok, %{queues: recover(), refused: %{}}}
+  end
+
+  # Hints written before the last restart are still in the store; the queues are
+  # a working set, not the record of what is owed.
+  defp recover do
+    queues =
+      Store.fold_system(%{}, fn record, queues ->
+        with true <- Record.alive?(record),
+             {:ok, target, key, original_alive?} <- Key.hint_parts(Record.key(record)) do
+          original = original_form(record, key, original_alive?)
+          Map.update(queues, target, %{key => original}, &Map.put(&1, key, original))
+        else
+          _ -> queues
+        end
+      end)
+
+    pending = queues |> Map.values() |> Enum.map(&map_size/1) |> Enum.sum()
+
+    if pending > 0 do
+      Logger.info("kurwadb: recovered #{pending} hints for #{map_size(queues)} nodes")
+    end
+
+    queues
   end
 
   @impl true
@@ -129,6 +170,9 @@ defmodule Kurwa.Handoff do
 
     case deliver(node, records, timeout) do
       :ok ->
+        # Mark them delivered in the store, or a restart would replay them.
+        Enum.each(records, fn record -> mark_delivered(node, record) end)
+
         Logger.info("kurwadb: handed off #{length(keys)} keys to #{node}")
         Map.drop(queue, keys)
 
@@ -166,6 +210,32 @@ defmodule Kurwa.Handoff do
   end
 
   defp put_queue(state, node, queue), do: %{state | queues: Map.put(state.queues, node, queue)}
+
+  # A hint is a record whose key says who owes it, carrying the original's
+  # stamp. `alive?` on the record means "still owed"; the original's own
+  # liveness rides in the key.
+  defp persistent_form(target, {key, lamport, origin, alive?, wall, expires_at}) do
+    {Key.hint_key(target, key, alive?), lamport, origin, true, wall, expires_at}
+  end
+
+  defp original_form({_hint_key, lamport, origin, _pending, wall, expires_at}, key, alive?) do
+    {key, lamport, origin, alive?, wall, expires_at}
+  end
+
+  # Both variants, not just the one we are holding. The original's liveness is
+  # part of the hint key, so adding a key and then deleting it leaves two
+  # durable hints while the in-memory queue - which dedupes by the original key
+  # - only ever hands over the newer one. Clearing both is free here and leaves
+  # nothing behind for a restart to replay.
+  defp mark_delivered(target, {key, _lamport, _origin, _alive?, _wall, _expires}) do
+    now = System.system_time(:millisecond)
+
+    for original_alive? <- [true, false] do
+      Store.put(
+        {Key.hint_key(target, key, original_alive?), Clock.tick(), node(), false, now, :never}
+      )
+    end
+  end
 
   defp schedule, do: Process.send_after(self(), :replay, Config.get(:handoff_interval))
 end

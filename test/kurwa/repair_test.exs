@@ -6,7 +6,6 @@ defmodule Kurwa.RepairTest do
   alias Kurwa.Key
   alias Kurwa.Record
   alias Kurwa.Repair
-  alias Kurwa.Store
 
   describe "digest/1" do
     test "is stable for an unchanged store" do

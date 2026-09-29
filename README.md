@@ -29,12 +29,12 @@ this event", seen-URL frontiers.
 
 ## Status
 
-Working, with 240 unit tests and 14 cluster tests — and both storage engines
+Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 240 tests, ~3s
-mix test --include cluster        # 14 more, ~9s: three real nodes, three real BEAMs
+mix test                          # 246 tests, ~3s
+mix test --include cluster        # 15 more, ~11s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 ```
 
@@ -161,7 +161,7 @@ Kurwa.Namespace       named sets, union and intersection on the read path
 Kurwa.Extractor       cache + single-flight (pass-through unless enabled)
 Kurwa.Coordinator     leaderless quorum reads and writes, read repair
 Kurwa.Placement       which replicas own a key, and which can answer
-Kurwa.Handoff         writes a replica missed, replayed when it returns
+Kurwa.Handoff         writes a replica missed, kept durably, replayed on return
 Kurwa.Repair          anti-entropy: finds replicas that drifted silently
 Kurwa.Registry        which named sets exist, as keys in a reserved set
 Kurwa.Cluster         membership, reachability, the ring

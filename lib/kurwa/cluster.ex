@@ -17,6 +17,14 @@ defmodule Kurwa.Cluster do
 
   A node leaves `members` only when an operator says so (`forget/1`).
 
+  Membership is also *learned*, not only verified. On reaching a peer, this node
+  takes the peer's member list and adds anything new to its own - as known, not
+  as reachable. Without that a restarted node would remember only the nodes it
+  could reach at that moment, compute its ring over a smaller cluster than its
+  peers, and place the same key on different replicas than they do. It also
+  means one seed is enough to join: the rest of the cluster arrives with the
+  first answer.
+
   The ring itself lives in `:persistent_term` so that the request path reads it
   with no copy and no process hop. Membership changes are rare, which is exactly
   the access pattern `:persistent_term` is for.
@@ -141,6 +149,29 @@ defmodule Kurwa.Cluster do
   end
 
   @impl true
+  def handle_cast({:learn, nodes}, state) do
+    fresh = Enum.reject(nodes, &MapSet.member?(state.members, &1))
+
+    if fresh == [] do
+      {:noreply, state}
+    else
+      members = Enum.reduce(fresh, state.members, &MapSet.put(&2, &1))
+
+      Logger.info(
+        "kurwadb: learned about #{Enum.join(fresh, ", ")} from a peer " <>
+          "(members: #{MapSet.size(members)})"
+      )
+
+      state = %{state | members: members}
+      publish(state)
+
+      # They are known now, but not yet reachable: check the ones that answer.
+      Enum.each(fresh, &check/1)
+      {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info({:nodeup, node, _info}, state) do
     verify(node)
     {:noreply, state}
@@ -182,6 +213,11 @@ defmodule Kurwa.Cluster do
       case safe_ping(node) do
         :pong ->
           GenServer.cast(parent, {:join, node})
+          # Whoever this node knows about, we should know about too.
+          case safe_members(node) do
+            {:ok, members} -> GenServer.cast(parent, {:learn, members})
+            _ -> :ok
+          end
 
         other ->
           Logger.debug("kurwadb: ignoring non-kurwadb node #{node}: #{inspect(other)}")
@@ -191,6 +227,12 @@ defmodule Kurwa.Cluster do
 
   defp safe_ping(node) do
     :erpc.call(node, Kurwa.Replica, :ping, [], 2_000)
+  catch
+    kind, reason -> {kind, reason}
+  end
+
+  defp safe_members(node) do
+    :erpc.call(node, Kurwa.Replica, :members, [], 2_000)
   catch
     kind, reason -> {kind, reason}
   end
