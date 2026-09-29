@@ -1,0 +1,17 @@
+[package]
+name = "kurwa_native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "kurwa_native"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+rustler = "0.36"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

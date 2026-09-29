@@ -95,6 +95,32 @@ reconnects per request is benchmarking TCP.
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
 
+## The native Bloom filter
+
+0.7.0 moved one function into Rust: Bloom membership, which is the read path of
+the on-disk engine. 100 000 keys, 7 probes over a 117 KB filter:
+
+| | Elixir | Rust |
+|---|---|---|
+| key present | 2 728 ns | **45 ns** |
+| key absent | 789 ns | **62 ns** |
+
+Sixty times faster in the case that has to check every probe. What that bought
+end to end is the more useful number, and it is smaller: an LSM `get` of an
+absent key went from 380 ns to 280 ns, about 26%, because the filter was no
+longer most of the cost once it stopped being slow. A present key barely moved,
+at 11.8 µs to 11.0 µs - that path is a `pread` and a term decode per record in
+the block, and neither is in Rust.
+
+Which is the point of measuring rather than asserting: a 60× improvement to a
+function is a 26% improvement to the operation, and the next thing worth
+touching is now somewhere else.
+
+`cargo` is optional. Without it the project compiles, the Elixir implementation
+is used, and the suite passes - and a test asserts the two implementations agree
+bit for bit, since a filter that disagrees with itself is a filter that says no
+to a key it holds.
+
 ## What 0.6.0 changed
 
 Durable hints. A hint is now written to the local store as it is taken, in the
@@ -121,8 +147,8 @@ KURWA_TEST_ENGINE=lsm mix test  # the on-disk one
 | resident, per key | 128.1 B | **3.01 B** |
 | resident, total | 24.4 MB | 0.57 MB |
 | on disk | — | 14.0 MB |
-| `get`, key present | 1.15 µs | 11.8 µs |
-| `get`, key absent | 1.15 µs | **0.38 µs** |
+| `get`, key present | 1.14 µs | 11.0 µs |
+| `get`, key absent | 1.14 µs | **0.28 µs** |
 
 Two things to read out of that table. The same machine holds **43× more keys**,
 because what stays in RAM is a Bloom filter and a sparse index rather than the

@@ -309,6 +309,35 @@ memtable counts twice until they merge. The ETS engine's count is exact. Both
 answer the same behaviour contract otherwise, and the way that is checked is by
 running the entire suite against each (`KURWA_TEST_ENGINE=lsm mix test`).
 
+## What is written in Rust, and why so little
+
+One function: Bloom membership, in `native/kurwa_native`, reached through
+`Kurwa.Native`. It is 60× faster than the Elixir one on a filter that has to
+check every probe.
+
+The rule for what may follow it: a narrow interface, pure CPU, no I/O, no
+awareness of the cluster, and short enough never to hold a scheduler. That rule
+excludes almost everything here, deliberately. This codebase is roughly 1 300
+lines of replication, 1 600 of storage and 1 500 of protocol frontends - and the
+entire node-to-node protocol is **79 lines**, because Erlang distribution
+already provides the transport, framing, serialisation, timeouts and up/down
+events. In Rust those 79 lines are a few thousand, and they are the part that is
+hard to get right: two of the bugs found in this project were in placement and
+membership, and both fixes were ten-line changes precisely because the transport
+underneath already worked.
+
+So the split is the one Riak made with LevelDB rather than the one Scylla made
+with C++: the arithmetic goes native, the distributed systems stay on the BEAM.
+
+It is also optional. Without `cargo` the project compiles, the Elixir
+implementation is used, and a test asserts the two agree bit for bit - a filter
+that disagrees with itself is a filter that says no to a key it holds. The hash
+is FNV-1a rather than `:erlang.phash2` for the same reason: both sides have to
+compute the same bits, and `phash2` has no portable definition.
+
+A NIF has no supervisor above it, so the native code returns `false` on a
+malformed filter rather than panicking, which would take the whole node down.
+
 ## The set registry
 
 "Which sets exist" is enumeration, and enumeration is the thing this store

@@ -9,7 +9,7 @@ defmodule Kurwa.Store.SSTable do
 
   Layout:
 
-      "KSST1\\n"
+      "KSST2\\n"
       records          len[4] crc32[4] term_to_binary(record), sorted by key
       index            every 16th key with its offset: klen[2] key offset[8]
       bloom            the filter bits
@@ -25,7 +25,7 @@ defmodule Kurwa.Store.SSTable do
 
   alias Kurwa.Store.Bloom
 
-  @magic "KSST1\n"
+  @magic "KSST2\n"
   @trailer "KSSTEND"
   @footer_size 49
   @index_every 16

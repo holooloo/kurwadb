@@ -4,7 +4,7 @@ defmodule Kurwadb.MixProject do
   def project do
     [
       app: :kurwadb,
-      version: "0.6.0",
+      version: "0.7.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -27,7 +27,8 @@ defmodule Kurwadb.MixProject do
       {:bandit, "~> 1.5"},
       {:thousand_island, "~> 1.5"},
       {:plug, "~> 1.16"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:rustler, "~> 0.36", runtime: false, optional: true}
     ]
   end
 end

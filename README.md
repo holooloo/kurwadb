@@ -54,6 +54,10 @@ mix test
 iex -S mix                       # HTTP on http://localhost:4040
 ```
 
+A Rust toolchain is optional. With `cargo` on the path one function - Bloom
+membership, the read path of the on-disk engine - is compiled natively; without
+it the Elixir implementation is used and everything still passes.
+
 Three nodes on one machine:
 
 ```sh
@@ -171,6 +175,7 @@ Kurwa.Store           local shards
 Kurwa.Store.Engine    storage behaviour, with two implementations
 Kurwa.Store.Ets       every key in memory; the default
 Kurwa.Store.Lsm       memtable plus sorted tables on disk, ~3 B of RAM per key
+Kurwa.Native          the little that is Rust: Bloom membership
 Kurwa.Gateway         HTTP
 Kurwa.NineP           9P2000
 ```
