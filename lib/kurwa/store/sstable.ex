@@ -7,10 +7,15 @@ defmodule Kurwa.Store.SSTable do
   else lives on disk and is read only when the filter says the key might be
   here. That is what lets a node hold far more keys than it has RAM.
 
+  A table holds no file handle of its own: it is plain data, safe to keep in
+  `:persistent_term` and to hand between processes. Reads take a raw handle from
+  `Kurwa.Store.SSTable.Fd`, which keeps one per process per table, because a raw
+  handle is a syscall where a shared one is a message round trip.
+
   Layout:
 
-      "KSST2\\n"
-      records          len[4] crc32[4] term_to_binary(record), sorted by key
+      "KSST3\\n"
+      records          len[4] crc32[4] keylen[2] key payload, sorted by key
       index            every 16th key with its offset: klen[2] key offset[8]
       bloom            the filter bits
       footer           fixed 49 bytes, ending "KSSTEND"
@@ -18,20 +23,27 @@ defmodule Kurwa.Store.SSTable do
   The footer is last because the file is written in one forward pass: the sizes
   of the index and the filter are only known once the records are down.
 
+  The key sits in the frame rather than inside the payload, and the payload
+  holds only the other five fields. Looking a key up in a block is then a byte
+  comparison per record and exactly one term decoded - the one that matched -
+  instead of decoding every record on the way past. It also stops the key being
+  written twice.
+
   Reads take one `pread`. The sparse index gives the block a key would be in,
   the block is read whole, and the frames in it are decoded in memory - rather
   than a syscall per record.
   """
 
   alias Kurwa.Store.Bloom
+  alias Kurwa.Store.SSTable.Fd
 
-  @magic "KSST2\n"
+  @magic "KSST3\n"
   @trailer "KSSTEND"
   @footer_size 49
   @index_every 16
   @max_entry 16_777_216
 
-  defstruct [:path, :fd, :index, :bloom, :bits, :hashes, :live, :records, :data_end]
+  defstruct [:path, :index, :bloom, :bits, :hashes, :live, :records, :data_end]
 
   @type t :: %__MODULE__{}
 
@@ -127,19 +139,17 @@ defmodule Kurwa.Store.SSTable do
     # File.stat, not :file.read_file_info: the latter answers with an Erlang
     # record, which no map pattern will ever match.
     with {:ok, %File.Stat{size: size}} when size > @footer_size <- File.stat(path),
-         # deliberately not :raw - a raw handle belongs to the process that
-         # opened it, and these are read from whichever process asks
-         {:ok, fd} <- :file.open(path, [:read, :binary]),
+         {:ok, fd} <- :file.open(path, [:read, :raw, :binary]),
          {:ok, footer} <- :file.pread(fd, size - @footer_size, @footer_size),
          <<data_end::little-64, index_count::little-32, bloom_offset::little-64, bits::little-32,
            hashes::little-16, live::little-64, records::little-64, @trailer>> <- footer,
          {:ok, index_binary} <- read_at(fd, data_end, bloom_offset - data_end),
          {:ok, bloom} <- read_at(fd, bloom_offset, div(bits, 8)),
-         {:ok, index} <- decode_index(index_binary, index_count) do
+         {:ok, index} <- decode_index(index_binary, index_count),
+         :ok <- :file.close(fd) do
       {:ok,
        %__MODULE__{
          path: path,
-         fd: fd,
          index: index,
          bloom: bloom,
          bits: bits,
@@ -156,9 +166,14 @@ defmodule Kurwa.Store.SSTable do
     end
   end
 
-  @doc "Closes the table's file handle."
+  @doc """
+  Releases this process's handle on the table, if it opened one.
+
+  The table itself holds nothing to close; other processes keep their own
+  handles and drop them when they are evicted or when they exit.
+  """
   @spec close(t()) :: :ok
-  def close(%__MODULE__{fd: fd}), do: :file.close(fd)
+  def close(%__MODULE__{path: path}), do: Fd.release(path)
 
   @doc """
   The record for `key`, or `nil`.
@@ -171,9 +186,11 @@ defmodule Kurwa.Store.SSTable do
     if Bloom.member?(table.bloom, table.bits, table.hashes, key) do
       {from, to} = block_for(table, key)
 
-      case read_at(table.fd, from, to - from) do
-        {:ok, block} -> find(block, key)
-        {:error, _reason} -> nil
+      with {:ok, fd} <- Fd.for(table.path),
+           {:ok, block} <- read_at(fd, from, to - from) do
+        find(block, key)
+      else
+        _ -> nil
       end
     end
   end
@@ -181,7 +198,10 @@ defmodule Kurwa.Store.SSTable do
   @doc "Folds over every record in the table, in key order."
   @spec fold(t(), acc, (Kurwa.Record.t(), acc -> acc)) :: acc when acc: term()
   def fold(%__MODULE__{} = table, acc, fun) do
-    scan(table.fd, byte_size(@magic), table.data_end, acc, fun)
+    case Fd.for(table.path) do
+      {:ok, fd} -> scan(fd, byte_size(@magic), table.data_end, acc, fun)
+      {:error, _reason} -> acc
+    end
   end
 
   @doc """
@@ -212,7 +232,8 @@ defmodule Kurwa.Store.SSTable do
   """
   @spec reader(t()) :: map()
   def reader(%__MODULE__{} = table) do
-    %{fd: table.fd, offset: byte_size(@magic), data_end: table.data_end, buffer: <<>>}
+    {:ok, fd} = Fd.for(table.path)
+    %{fd: fd, offset: byte_size(@magic), data_end: table.data_end, buffer: <<>>}
   end
 
   @doc "A cursor over records already in memory, so a memtable can join a merge."
@@ -224,8 +245,8 @@ defmodule Kurwa.Store.SSTable do
   def next(%{list: [record | rest]}), do: {record, %{list: rest}}
   def next(%{list: []}), do: :done
 
-  def next(%{buffer: <<len::32, crc::32, payload::binary-size(len), rest::binary>>} = reader) do
-    case decode(payload, crc) do
+  def next(%{buffer: <<len::32, crc::32, body::binary-size(len), rest::binary>>} = reader) do
+    case unframe(body, crc) do
       {:ok, record} -> {record, %{reader | buffer: rest}}
       :error -> :done
     end
@@ -281,9 +302,12 @@ defmodule Kurwa.Store.SSTable do
 
   # ------------------------------------------------------------------ private
 
-  defp frame(record) do
-    payload = :erlang.term_to_binary(record)
-    [<<byte_size(payload)::32, :erlang.crc32(payload)::32>>, payload]
+  defp frame({key, lamport, origin, alive?, wall, expires_at}) do
+    payload = :erlang.term_to_binary({lamport, origin, alive?, wall, expires_at})
+    body = [<<byte_size(key)::little-16>>, key, payload]
+    bytes = IO.iodata_to_binary(body)
+
+    [<<byte_size(bytes)::32, :erlang.crc32(bytes)::32>>, bytes]
   end
 
   defp encode_index(index) do
@@ -334,18 +358,19 @@ defmodule Kurwa.Store.SSTable do
       else: lower_bound(index, key, lo, mid - 1)
   end
 
-  defp find(<<len::32, crc::32, payload::binary-size(len), rest::binary>>, key) do
-    case decode(payload, crc) do
-      {:ok, record} ->
-        found = elem(record, 0)
-
+  # Walks the block comparing keys as bytes. Only the record that matches is
+  # ever decoded, and records sort by key, so a key greater than the one we want
+  # ends the search.
+  defp find(<<len::32, crc::32, body::binary-size(len), rest::binary>>, key) do
+    case body do
+      <<klen::little-16, found::binary-size(klen), payload::binary>> ->
         cond do
-          found == key -> record
+          found == key -> decode(found, payload, crc, body)
           found > key -> nil
           true -> find(rest, key)
         end
 
-      :error ->
+      _ ->
         nil
     end
   end
@@ -384,9 +409,9 @@ defmodule Kurwa.Store.SSTable do
     end
   end
 
-  defp decode_block(<<len::32, crc::32, payload::binary-size(len), rest::binary>>, acc, fun, used)
+  defp decode_block(<<len::32, crc::32, body::binary-size(len), rest::binary>>, acc, fun, used)
        when len <= @max_entry do
-    case decode(payload, crc) do
+    case unframe(body, crc) do
       {:ok, record} -> decode_block(rest, fun.(record, acc), fun, used + 8 + len)
       :error -> {acc, used}
     end
@@ -394,19 +419,33 @@ defmodule Kurwa.Store.SSTable do
 
   defp decode_block(_rest, acc, _fun, used), do: {acc, used}
 
-  defp decode(payload, crc) do
-    if :erlang.crc32(payload) == crc do
-      case :erlang.binary_to_term(payload) do
-        {key, lamport, node, alive?, wall, expires}
-        when is_binary(key) and is_integer(lamport) and is_atom(node) and is_boolean(alive?) and
-               is_integer(wall) ->
-          {:ok, {key, lamport, node, alive?, wall, expires}}
-
-        _ ->
-          :error
-      end
+  # The matched record, checked against the frame's crc first.
+  defp decode(key, payload, crc, body) do
+    with true <- :erlang.crc32(body) == crc,
+         {:ok, record} <- rebuild(key, payload) do
+      record
     else
-      :error
+      _ -> nil
+    end
+  end
+
+  defp unframe(body, crc) do
+    with true <- :erlang.crc32(body) == crc,
+         <<klen::little-16, key::binary-size(klen), payload::binary>> <- body do
+      rebuild(key, payload)
+    else
+      _ -> :error
+    end
+  end
+
+  defp rebuild(key, payload) do
+    case :erlang.binary_to_term(payload) do
+      {lamport, origin, alive?, wall, expires}
+      when is_integer(lamport) and is_atom(origin) and is_boolean(alive?) and is_integer(wall) ->
+        {:ok, {key, lamport, origin, alive?, wall, expires}}
+
+      _ ->
+        :error
     end
   rescue
     ArgumentError -> :error

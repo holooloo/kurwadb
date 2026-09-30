@@ -607,7 +607,7 @@
           <dd>An unreachable quorum is a <code>503</code>, never a <code>false</code>. This is exactly where cache-based deduplication lies to you.</dd>
         </div>
         <div class="spec">
-          <dt>364 ns</dt>
+          <dt>339 ns</dt>
           <dd>A local membership check is one <code>:ets.lookup</code> in the caller's own process — no mailbox, no copy.</dd>
         </div>
         <div class="spec">
@@ -616,7 +616,7 @@
         </div>
         <div class="spec">
           <dt>3 bytes per key</dt>
-          <dd>The on-disk engine keeps a Bloom filter in RAM instead of the keys — ten times less memory than Redis, and a key that <em>is not</em> there is answered in 280 ns without touching the disk. That check is the one function written in Rust.</dd>
+          <dd>The on-disk engine keeps a Bloom filter in RAM instead of the keys — ten times less memory than Redis, and a key that <em>is not</em> there is answered in 200 ns without touching the disk, and one that is in 3.6 µs. That check is the one function written in Rust.</dd>
         </div>
         <div class="spec">
           <dt>It mounts</dt>
@@ -658,9 +658,9 @@
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.6.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.8.0</th></tr></thead>
           <tbody>
-            <tr><td>Local membership check</td><td class="num">364 ns</td></tr>
+            <tr><td>Local membership check</td><td class="num">339 ns</td></tr>
             <tr><td>Quorum across 3 nodes, single client</td><td class="num">~42 µs</td></tr>
             <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">57k writes/s · 61k reads/s</td></tr>
             <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">123k req/s</td></tr>

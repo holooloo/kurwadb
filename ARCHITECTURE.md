@@ -286,9 +286,22 @@ so the same machine holds roughly 43× more.
 The Bloom filter is not an optimisation here, it is the read path. "Is this key
 here" is the only question this store ever asks, and a filter answers it from
 memory, wrong in one direction only. Measured on 200k keys: a present key costs
-11.8 µs (a seek), an absent one 0.38 µs and no seek at all - *faster* than the
-ETS engine, which is the right way round for a store whose usual answer is "not
+3.6 µs, an absent one 0.20 µs and no seek at all - *faster* than the ETS
+engine, which is the right way round for a store whose usual answer is "not
 seen".
+
+Getting the present case from 11.8 µs to 3.6 took profiling the parts rather
+than the whole, and the answer was not where it looked. With the filter already
+native, the `pread` was 83% of the read and the filter 1%. The handle had been
+opened without `:raw` so that any process could use it, and a non-raw handle is
+a message round trip to the process owning the file: 6.41 µs against 1.46 for
+the same 1 KB. Tables now hold no handle at all - they are plain data, which is
+what belongs in `:persistent_term` anyway - and each reading process keeps its
+own raw handle, capped so a compacted table cannot pin inodes.
+
+The frame format helps the rest: the key lives in the frame header rather than
+inside the `term_to_binary` payload, so scanning a block compares bytes and
+decodes exactly the record that matched.
 
 Two design points that are not obvious:
 

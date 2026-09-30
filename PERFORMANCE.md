@@ -54,15 +54,15 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 |
-|---|---|---|---|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns |
-| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 | 0.8.0 |
+|---|---|---|---|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 33 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns | 292 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns | 339 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs | 1.60 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs | 1.78 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs | 5.08 µs |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs | 2.86 µs |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
@@ -94,6 +94,48 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## Where an on-disk read actually goes
+
+0.8.0 is the result of profiling the parts instead of the whole, and it is the
+most useful thing in this file.
+
+After the Bloom filter went native, an on-disk read of a key that *is* present
+still cost 11 µs. Timing the pieces of that read:
+
+| | |
+|---|---|
+| `:file.pread` of the block | 7.2 µs — **83%** |
+| everything else (decode, index search, calls) | 1.4 µs — 16% |
+| the Bloom filter | 0.05 µs — **1%** |
+
+The filter that had just been made sixty times faster was one percent of the
+read. What cost everything was the file handle: it was opened without `:raw`,
+so that any process could use it, and a non-raw handle is a message round trip
+to the process that owns the file. Same 1 KB read, measured both ways: **6.41 µs
+shared, 1.46 µs raw.**
+
+So a table now holds no handle at all - it is plain data, which is also what you
+want in `:persistent_term` - and each reading process opens its own raw handle
+on first use and keeps it (`Kurwa.Store.SSTable.Fd`, capped, so a compacted-away
+table cannot pin inodes forever).
+
+The other change is the frame format: the key moved out of the `term_to_binary`
+payload into the frame header, so scanning a block for a key compares bytes and
+decodes exactly one record instead of every record on the way past. Worth 9% and
+a slightly smaller file, since the key is no longer stored twice.
+
+| on-disk `get`, key present | |
+|---|---|
+| 0.6.0 | 11.8 µs |
+| 0.7.0, Bloom in Rust | 11.0 µs |
+| 0.8.0, key out of the payload | 10.0 µs |
+| 0.8.0, raw file handles | **3.6 µs** |
+
+Three times faster, and the part that did most of it was not the part written
+in Rust. That is the argument for measuring the pieces: a 60× improvement to 1%
+of the work is invisible, and the 83% was sitting in a one-line decision about
+how to open a file.
 
 ## The native Bloom filter
 
@@ -146,9 +188,9 @@ KURWA_TEST_ENGINE=lsm mix test  # the on-disk one
 |---|---|---|
 | resident, per key | 128.1 B | **3.01 B** |
 | resident, total | 24.4 MB | 0.57 MB |
-| on disk | — | 14.0 MB |
-| `get`, key present | 1.14 µs | 11.0 µs |
-| `get`, key absent | 1.14 µs | **0.28 µs** |
+| on disk | — | 13.5 MB |
+| `get`, key present | 1.14 µs | **3.6 µs** |
+| `get`, key absent | 1.14 µs | **0.20 µs** |
 
 Two things to read out of that table. The same machine holds **43× more keys**,
 because what stays in RAM is a Bloom filter and a sparse index rather than the
