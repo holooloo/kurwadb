@@ -173,7 +173,7 @@
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 9 minutes</span>
+      <span>about 12 minutes</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
   </header>
@@ -360,8 +360,8 @@ remove  →  delete</code></pre>
   <h2>The numbers, and where they do not apply</h2>
 
   <p>On one laptop, all three nodes sharing the same CPU: a local membership check in
-     349 ns, a quorum across three nodes in about 42 µs, 57,000 writes and 61,000 reads
-     per second at 64 concurrent clients, 119,000 requests per second through the HTTP
+     364 ns, a quorum across three nodes in about 45 µs, 55,000 writes and 59,000 reads
+     per second at 64 concurrent clients, 123,000 requests per second through the HTTP
      gateway with keep-alive, and 128 bytes of RAM per key.</p>
 
   <p>That last number is the one that decides how much a machine can hold, which is why
@@ -377,18 +377,89 @@ remove  →  delete</code></pre>
   <p>Both engines answer the same behaviour contract, and the way that is checked is by
      running the entire test suite against each of them rather than asserting it.</p>
 
-  <p>Comparing that to another store is mostly a way to mislead yourself — Redis's own
-     benchmarking guide says flatly that comparing one benchmark tool's output to
-     another's and extrapolating is pointless, and it is right. Two differences matter
-     more than the numbers: the HTTP figures are HTTP and JSON against a binary
-     protocol, and the three-node figures include a quorum with read repair that a
-     single-node store is not doing.</p>
+  <h2>One function in Rust, and what it taught</h2>
+
+  <p>The Bloom filter is the read path of the on-disk engine, so it was the obvious thing
+     to make fast. In Rust, a membership check on a filter that has to examine every probe
+     went from 2 728 ns to 45 — sixty times.</p>
+
+  <p>The end-to-end number is the one worth quoting, and it is much smaller: an on-disk
+     read of an absent key went from 380 ns to 280, about 26%. Once the filter stopped
+     being slow it stopped being most of the cost. A present key barely moved at all,
+     because that path is a <code>pread</code> and a term decode per record, neither of
+     which went native.</p>
+
+  <blockquote>
+    <p>A sixty-fold improvement to a function is a twenty-six percent improvement to the
+       operation. That is not a disappointment, it is the reason to measure instead of
+       assert — the next thing worth touching is now somewhere else.</p>
+  </blockquote>
+
+  <p>What is <em>not</em> in Rust is the more deliberate half. The rule for what may cross
+     over is: a narrow interface, pure CPU, no I/O, no awareness of the cluster, and short
+     enough never to hold a scheduler. That excludes almost everything here. The entire
+     node-to-node protocol is <strong>79 lines</strong> of Elixir, because the runtime
+     already provides the transport, the framing, the serialisation, the timeouts and the
+     up/down events. In Rust those 79 lines are a few thousand — and they are the part
+     that is hard to get right. Both cluster bugs in this project were ten-line fixes
+     precisely because the transport underneath already worked. So the split is the one
+     Riak made with LevelDB, not the one Scylla made by rewriting Cassandra in C++.</p>
+
+  <p>It is optional, too: without <code>cargo</code> the project compiles, the Elixir
+     implementation is used, and a test checks that the two agree on six thousand probes.
+     A filter that disagrees with itself is a filter that says no to a key it holds.</p>
+
+  <h2>Measured against Redis, on the same machine</h2>
+
+  <p>Redis's own guide is blunt that comparing one benchmark tool's output to another's
+     and extrapolating is pointless. It is right, so I did not do that: I built Redis
+     8.0.3 here and ran both servers on this laptop, one at a time, asked the same
+     question by a client with the same concurrency.</p>
+
+  <p>A million 13-byte members:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Bytes of RAM per key</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>redis <code>SET</code>, hashtable encoding</td><td class="num">30.2 B</td></tr>
+        <tr><td>kurwadb, in-memory engine</td><td class="num">128.1 B</td></tr>
+        <tr><td>kurwadb, on-disk engine</td><td class="num">3.0 B</td></tr>
+        <tr><td>a Bloom filter on its own</td><td class="num">1.2 B</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Membership over the wire, one node, no replication on either side:</p>
+
+  <div class="scroll">
+    <table>
+      <tbody>
+        <tr><td>redis <code>SISMEMBER</code> (RESP)</td><td class="num">142 600 /sec</td></tr>
+        <tr><td>kurwadb <code>GET /k/:key</code> (HTTP + JSON)</td><td class="num">115–123k /sec</td></tr>
+        <tr><td>kurwadb, same question across a 3-node quorum</td><td class="num">59 000 /sec</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>An earlier version of this article guessed that Redis and the in-memory engine were
+     in the same league on memory. <strong>They are not: Redis is four times better.</strong>
+     Some of that gap is what we store — a kurwadb record carries a Lamport stamp, the
+     node that issued it, a tombstone flag, a wall clock and an expiry, about 40 bytes of
+     content against Redis's 13, because those five fields are what make it replicate and
+     expire. The rest is BEAM term overhead.</p>
+
+  <p>The interesting direction is the other one. <strong>The on-disk engine uses ten times
+     less memory than Redis</strong>, and that is not a language question at all: what is
+     in RAM is a Bloom filter rather than the keys. Throughput lands within about 15% of
+     Redis despite HTTP and JSON against a binary protocol, which is closer than the
+     protocols suggest.</p>
 
   <p>So, plainly, when not to use this:</p>
 
   <ul>
-    <li><strong>One node.</strong> Redis wins on every axis — simpler, faster, a decade in production, an ecosystem.</li>
-    <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs about 1.2 bytes per key against 128.</li>
+    <li><strong>One node.</strong> Redis is simpler, has a decade in production and an ecosystem, is 15% faster on this test, and uses four times less memory than the in-memory engine. Take it.</li>
+    <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0 — less of a gap than it used to be, but still a real one.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
     <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>
     <li><strong>Zero hours in production.</strong> One author, no client libraries, no TLS between nodes.</li>

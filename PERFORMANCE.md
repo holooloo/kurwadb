@@ -185,17 +185,48 @@ unchanged within variance, which is the point.
 A round is real work, though: it folds the whole local store once per peer. The
 default interval is ten minutes and one peer per tick.
 
-## Notes on comparing this to other stores
+## Against Redis, measured here
 
-Redis's own benchmarking guide is blunt about it: *"It is absolutely pointless
-to compare the result of redis-benchmark to the result of another benchmark
-program and extrapolate."* The same applies in reverse to the table above.
+Redis's own guide is blunt that comparing one benchmark tool's output to
+another's and extrapolating is pointless. So this is not that: both servers were
+built and run on this machine, one at a time, asked the same question by a
+client with the same concurrency. `REDIS_DIR=... bench/versus.sh` reproduces it.
 
-Two differences matter more than the numbers:
+Redis 8.0.3, one million 13-byte members in a `SET`:
 
-* **Protocol.** The HTTP figures are HTTP/1.1 with JSON bodies against a binary
-  protocol's figures. Most of any gap is framing, not storage — the store itself
-  answers in 382 ns.
-* **What is being bought.** The three-node figures include a quorum across three
-  replicas with read repair. A single-node store of any kind is not doing that
-  work and should be faster.
+| | bytes per key |
+|---|---|
+| redis `SET`, hashtable encoding | **30.2 B** |
+| kurwadb, ETS engine | 128.1 B |
+| kurwadb, LSM engine | **3.0 B** |
+| a Bloom filter on its own | 1.2 B (false positives, no deletes) |
+
+Membership over the wire, one node, no replication on either side, 64 clients,
+200 000 requests:
+
+| | |
+|---|---|
+| redis `SISMEMBER` (RESP) | 142 600 req/sec, p50 0.24 ms |
+| kurwadb `GET /k/:key` (HTTP/1.1 + JSON) | 115 000 – 123 000 req/sec |
+| kurwadb, same question across a 3-node quorum | 59 000 /sec |
+
+### Reading that honestly
+
+**Redis is four times more memory-efficient than our in-memory engine**, and an
+earlier version of these docs guessed they were in the same league. They are
+not. Some of the gap is what we store: a kurwadb record carries a Lamport stamp,
+the node that issued it, a tombstone flag, a wall clock and an expiry - about 40
+bytes of logical content against Redis's 13 - because those five fields are what
+make it replicate and expire. The rest is BEAM term overhead, and Rust would
+recover maybe half of it.
+
+**The LSM engine uses ten times less memory than Redis**, which is the more
+interesting direction and is not a language question at all: what is in RAM is a
+Bloom filter, not the keys.
+
+**Throughput is within about 15%** despite HTTP and JSON against a binary
+protocol, which is closer than the protocols suggest.
+
+Two caveats on the Redis side: it was built here without jemalloc (`malloc=libc`),
+which usually costs it a little memory, and a single Redis node is not doing the
+replication the three-node row is.
