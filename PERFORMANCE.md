@@ -70,21 +70,38 @@ use it nothing. Every difference in this table is inside run-to-run variance.
 
 ## Three nodes, quorum (n=3 r=2 w=2)
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
-|---|---|---|---|---|
-| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs |
-| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs |
-| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec |
-| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec |
-| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 |
+|---|---|---|---|---|---|---|
+| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs | — | 48.4 µs |
+| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs | — | 50.9 µs |
+| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec | 46 500 ops/sec | 46 200 ops/sec |
+| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec | 44 300 ops/sec | 48 000 ops/sec |
+| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec | 1 710 000 ops/sec | 1 859 000 ops/sec |
+
+**Read the last two columns together, not against the ones before them.** The
+cluster and HTTP benchmarks were not re-run for 0.5.0 – 0.7.0, which broke this
+file's own rule, and when they were run again on 2026-10-05 every concurrent
+figure came out 10–20% below the 0.4.0 column. Before calling that a regression,
+0.4.0, 0.5.0, 0.6.0 and 0.7.0 were each checked out and measured the same day:
+all of them landed at 44 000 – 51 000 ops/sec, 0.4.0 included. The code did not
+get slower; the machine did, for multi-core work (the OS was updated in between,
+and three nodes on one CPU feel that first). Single-threaded figures reproduce to
+within a few percent, so the table above is unaffected.
+
+0.8.0 is the median of three runs; on the same day the same three runs spread
+from 43 400 to 49 600 for `add`, wider than the ±7% quoted above. The re-run
+0.4.0 column is a single run.
 
 ## HTTP gateway, one node
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 |
-|---|---|---|---|---|
-| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec | 119 000 req/sec |
-| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec | 33 400 req/sec |
-| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec | 3 967 req/sec — 396 700 keys/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 |
+|---|---|---|---|---|---|---|
+| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec | 119 000 req/sec | 103 000 req/sec | 106 000 req/sec |
+| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec | 33 400 req/sec | 28 200 req/sec | 30 000 req/sec |
+| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec | 3 967 req/sec — 396 700 keys/sec | 3 782 req/sec — 378 200 keys/sec | 3 962 req/sec — 396 200 keys/sec |
+
+Same story as the cluster: 0.4.0 measured on 2026-10-05 is slower than 0.4.0
+measured in September, and 0.8.0 is at or above it on every row. Single runs.
 
 The struck-through figure is a bad measurement, not a slow release. It was taken
 by hand before `bench/http.sh` existed, immediately after a 30 000-request run,

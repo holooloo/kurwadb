@@ -196,11 +196,11 @@ One laptop, all three nodes sharing the same CPU.
 
 | | |
 |---|---|
-| local membership check | 361 ns |
-| quorum write / read across 3 nodes | ~47 µs single-client latency |
-| the same, 64 concurrent clients | 54k writes/sec, 59k reads/sec |
-| `GET /k/:key` over HTTP, keep-alive | 126k req/sec |
-| `POST /batch`, 100 keys per request | 408k keys/sec |
+| local membership check | 338 ns |
+| quorum write / read across 3 nodes | ~49 µs single-client latency |
+| the same, 64 concurrent clients | 46k writes/sec, 48k reads/sec |
+| `GET /k/:key` over HTTP, keep-alive | 106k req/sec |
+| `POST /batch`, 100 keys per request | 396k keys/sec |
 | RAM per key | 128 B (13-byte keys), 152 B (36-byte keys) |
 
 ```sh

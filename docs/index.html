@@ -653,7 +653,9 @@
            The regression is the bug, not the new baseline.</p>
         <p>Which is only worth saying if it can be checked, so every figure here comes
            from a script in <code>bench/</code> and every version gets a column in
-           <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.</p>
+           <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.
+           The concurrent figures below are lower than earlier releases showed: the machine
+           got slower, not the code — 0.4.0 re-run the same day lands lower still.</p>
       </div>
 
       <div class="scroll">
@@ -661,9 +663,9 @@
           <thead><tr><th scope="col">Operation</th><th scope="col">0.8.0</th></tr></thead>
           <tbody>
             <tr><td>Local membership check</td><td class="num">339 ns</td></tr>
-            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~42 µs</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">57k writes/s · 61k reads/s</td></tr>
-            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">123k req/s</td></tr>
+            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~49 µs</td></tr>
+            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">46k writes/s · 48k reads/s</td></tr>
+            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">106k req/s</td></tr>
             <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">396k keys/s</td></tr>
             <tr><td>RAM per key, in-memory engine</td><td class="num">128 B · 152 B</td></tr>
             <tr><td>RAM per key, on-disk engine</td><td class="num">3.0 B</td></tr>
