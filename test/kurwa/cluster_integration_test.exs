@@ -274,6 +274,53 @@ defmodule Kurwa.ClusterIntegrationTest do
     assert write.op == :write
   end
 
+  # Found as a flaky read-repair test: a write stamped by a coordinator whose
+  # clock is behind a replica's record loses on every replica, and every one
+  # still answers {:ok, winner}. It was acknowledged and had done nothing.
+  test "an add coordinated by a node whose clock is behind still takes effect", %{
+    peers: [one, two, three]
+  } do
+    key = "behind"
+    storage_key = Kurwa.Key.encode(key)
+
+    # A delete stamped far ahead, on two replicas only - so node one's clock has
+    # never seen it.
+    ahead = TC.call(one, Kurwa.Clock, :peek, []) + 10_000
+    tombstone = Kurwa.Record.new(storage_key, ahead, three.node, false)
+    for peer <- [two, three], do: {:ok, _} = TC.call(peer, Kurwa.Store, :put, [tombstone])
+    assert TC.call(one, Kurwa.Clock, :peek, []) < ahead
+
+    assert TC.call(one, Kurwa, :add, [key]) == :ok
+    assert TC.call(two, Kurwa, :fetch, [key, [r: 3]]) == {:ok, true}
+  end
+
+  # Replica requests carry no process monitor - it cost more than :erpc did -
+  # so a replica that is gone must be reported by monitor_node, at once. Asked
+  # directly, so that placement cannot quietly leave the dead nodes out first.
+  test "a replica that is gone answers a request at once, not at the deadline", %{
+    peers: [one, two, three]
+  } do
+    :ok = TC.call(one, Kurwa, :add, ["still-here"])
+    key = TC.call(one, Kurwa.Key, :encode, ["still-here"])
+
+    TC.stop(two, :kill)
+    TC.stop(three, :kill)
+
+    nodes = [one.node, two.node, three.node]
+
+    {micros, outcome} =
+      TC.call(one, :timer, :tc, [Kurwa.Quorum, :request, [nodes, {:get, key}, 3, 10_000]])
+
+    assert [{_, record}] = outcome.ok
+    assert Kurwa.Record.member?(record)
+
+    assert outcome.failed |> Enum.map(&elem(&1, 0)) |> Enum.sort() ==
+             Enum.sort([two.node, three.node])
+
+    assert Enum.all?(outcome.failed, fn {_, reason} -> reason == {:no_reply, :noconnection} end)
+    assert div(micros, 1000) < 3_000, "waited #{div(micros, 1000)}ms for two dead replicas"
+  end
+
   test "a forgotten node leaves the ring and stops collecting hints", %{
     peers: [one, _two, three]
   } do

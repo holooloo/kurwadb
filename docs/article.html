@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>A database that stores keys and nothing else</title>
-<meta name="description" content="What falls out of one constraint, and the four bugs that only turned up when I measured.">
+<meta name="description" content="What falls out of one constraint, and the five bugs that only turned up when I measured.">
 <meta name="author" content="kurwadb">
 <meta property="og:title" content="A database that stores keys and nothing else">
-<meta property="og:description" content="What falls out of one constraint, and the four bugs that only turned up when I measured.">
+<meta property="og:description" content="What falls out of one constraint, and the five bugs that only turned up when I measured.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://kurwadb.dev/article.html">
 <link rel="canonical" href="https://kurwadb.dev/article.html">
@@ -169,12 +169,12 @@
 
   <header class="post">
     <h1>A database that stores keys and nothing else</h1>
-    <p class="dek">One constraint, followed all the way down — and the four bugs that
+    <p class="dek">One constraint, followed all the way down — and the five bugs that
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 19 minutes</span>
-      <span>re-measured 5 October 2026</span>
+      <span>about 23 minutes</span>
+      <span>re-measured 6 October 2026</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
   </header>
@@ -361,17 +361,17 @@ remove  →  delete</code></pre>
   <h2>The numbers, and where they do not apply</h2>
 
   <p>On one laptop, all three nodes sharing the same CPU: a local membership check in
-     338 ns, a quorum across three nodes in about 49 µs, 46,000 writes and 48,000 reads
-     per second at 64 concurrent clients, 106,000 requests per second through the HTTP
-     gateway with keep-alive, and 128 bytes of RAM per key.</p>
+     361 ns, a quorum across three nodes in about 40 µs, 64,600 writes and 68,600 reads
+     per second at 64 concurrent clients, 131,000 requests per second through the HTTP
+     gateway with keep-alive, and 128 bytes of RAM per key. How the quorum got from 52 µs
+     to 40, and why the HTTP figure is not comparable with the earlier ones, is
+     <a href="#where-a-quorum-read-went">further down</a>.</p>
 
-  <p>Those concurrent figures are lower than the ones this article first carried — 55,000,
-     59,000 and 123,000 — and the code is not why. Between September and October the
-     laptop got slower at anything that uses every core. Checking out the September
-     release and running it again gives the same lower numbers, and so does the
-     <em>same Redis binary</em>, which went from 142,600 to 102,400. Benchmarks from
-     different days on a laptop are different machines; only figures taken side by side
-     on the same day are compared below.</p>
+  <p>Figures from different days on a laptop come from different machines. Between
+     September and October this one got slower at anything that uses every core: the
+     September release, checked out and run again, lost 10–20%, and so did the <em>same
+     Redis binary</em> with the same client, 142,600 down to 102,400. So only figures
+     taken side by side on the same day are compared below.</p>
 
   <p>That last number is the one that decides how much a machine can hold, which is why
      there is now a second engine. It keeps recent keys in memory and older ones in
@@ -504,8 +504,10 @@ remove  →  delete</code></pre>
   <p>Redis's own guide is blunt that comparing one benchmark tool's output to another's
      and extrapolating is pointless. It is right, so I did not do that: I built Redis
      8.0.3 here and ran both servers on this laptop, one at a time, asked the same
-     question by a client with the same concurrency. Then, after the read path got three
-     times faster, I did it again — three runs each, same day, same machine.</p>
+     question by a client with the same concurrency. Then I did it twice more, and the
+     second time I found the clients had been the ceiling all along — so these figures
+     are from the third: four client threads on each side, a million requests, three
+     runs each.</p>
 
   <p>A million 13-byte members:</p>
 
@@ -526,9 +528,9 @@ remove  →  delete</code></pre>
   <div class="scroll">
     <table>
       <tbody>
-        <tr><td>redis <code>SISMEMBER</code> (RESP)</td><td class="num">102 400 /sec</td></tr>
-        <tr><td>kurwadb <code>GET /k/:key</code> (HTTP + JSON)</td><td class="num">103 300 /sec</td></tr>
-        <tr><td>kurwadb, same question across a 3-node quorum</td><td class="num">48 000 /sec</td></tr>
+        <tr><td>redis <code>SISMEMBER</code> (RESP)</td><td class="num">142 800 /sec</td></tr>
+        <tr><td>kurwadb <code>GET /k/:key</code> (HTTP + JSON)</td><td class="num">118 900 /sec</td></tr>
+        <tr><td>kurwadb, same question across a 3-node quorum</td><td class="num">68 600 /sec</td></tr>
       </tbody>
     </table>
   </div>
@@ -544,12 +546,15 @@ remove  →  delete</code></pre>
      less memory than Redis</strong>, and that is not a language question at all: what is
      in RAM is a Bloom filter rather than the keys.</p>
 
-  <p>Throughput is a tie: medians of 102,400 and 103,300, with every run of either inside
-     2% of the other. In September Redis led by 15%; today the laptop is slower and both
-     servers sit at the same ceiling, which says that at this concurrency neither is
-     limited by its storage any more — the loopback, the client and the protocol are
-     what is being measured. HTTP with JSON against a binary protocol, and it no longer
-     costs anything visible.</p>
+  <p><strong>Redis is about 20% faster on throughput.</strong> For one day this article
+     said it was a tie — 102,400 against 103,300, inside 2% on every run — and I read
+     that as both servers having outgrown their storage. It was both <em>clients</em>
+     having hit theirs. <code>ab</code> is one thread, and so is
+     <code>redis-benchmark</code> unless told otherwise. Against the same kurwadb node at
+     the same 64 connections, one <code>ab</code> read 96,900 requests a second and four of
+     them, summed, 133,900. Given four client threads each, Redis pulls ahead again.
+     That gap is HTTP and JSON against a binary protocol, and closing it is a protocol
+     question, not a storage one.</p>
 
   <p>The site used to list the on-disk engine at "115–123k" over HTTP as well. The script
      never measured that: it writes a single key into whichever engine is the default, so
@@ -560,16 +565,85 @@ remove  →  delete</code></pre>
     <table>
       <thead><tr><th><code>GET /k/:key</code>, 1M keys, 64 clients</th><th>In-memory</th><th>On-disk</th></tr></thead>
       <tbody>
-        <tr><td>key present</td><td class="num">~100 000 /sec</td><td class="num">70 500 /sec</td></tr>
-        <tr><td>key absent</td><td class="num">~100 000 /sec</td><td class="num">103 500 /sec</td></tr>
+        <tr><td>key present</td><td class="num">~122 000 /sec</td><td class="num">92 000 /sec</td></tr>
+        <tr><td>key absent</td><td class="num">~117 000 /sec</td><td class="num">116 000 /sec</td></tr>
       </tbody>
     </table>
   </div>
 
-  <p>A hit from disk costs 30% of the throughput; a miss costs nothing, because the filter
-     answers it without touching the file. The data set sits in the OS page cache here, so
-     "from disk" means a syscall answered from memory — the steady state for a set that
-     fits in page cache, and the best case for one that does not.</p>
+  <p>A hit from disk costs a quarter of the throughput; a miss costs nothing, because the
+     filter answers it without touching the file. The data set sits in the OS page cache
+     here, so "from disk" means a syscall answered from memory — the steady state for a
+     set that fits in page cache, and the best case for one that does not.</p>
+
+  <h2 id="where-a-quorum-read-went">Where a quorum read went</h2>
+
+  <p>With the clients out of the way, the next number to take apart was the cluster: a
+     read across three nodes cost 52 µs. Timed in pieces, from inside one of the nodes:</p>
+
+  <div class="scroll">
+    <table>
+      <tbody>
+        <tr><td>the whole read, <code>n=3 r=2</code></td><td class="num">52.5 µs</td></tr>
+        <tr><td>a bare message to another node and back</td><td class="num">29.9 µs</td></tr>
+        <tr><td><code>:erpc.call</code> to another node, doing nothing</td><td class="num">40.3 µs</td></tr>
+        <tr><td>the quorum's own processes, no work in them</td><td class="num">4.4 µs</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Thirty microseconds is one round trip through the kernel's TCP stack on loopback, and
+     no code of mine shortens it; on separate machines it becomes the network. The rest
+     was mine. <code>:erpc</code> spawns a process on the far node for every call, which
+     was ten microseconds on top of the round trip, and the quorum started a collector and
+     then a worker per replica just to wait for each answer.</p>
+
+  <p>So a read or write now goes as a plain message to one of sixteen long-lived processes
+     on each replica, and the collector sends them itself — sending does not block, so the
+     workers had nothing to do. The first version was <em>slower</em> than before, 56 µs,
+     because I had put a monitor on each remote process so that a dead node would fail the
+     request at once. Monitoring a process on another node is two more signals over the
+     wire. <code>monitor_node</code> gets the same answer from the local distribution
+     layer without sending anything, and costs about a microsecond.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>3 nodes, <code>n=3 r=2 w=2</code></th><th>Before</th><th>After</th></tr></thead>
+      <tbody>
+        <tr><td>a read, one client</td><td class="num">50.9 µs</td><td class="num">40.8 µs</td></tr>
+        <tr><td>writes, 64 clients</td><td class="num">46 200 /sec</td><td class="num">64 600 /sec</td></tr>
+        <tr><td>reads, 64 clients</td><td class="num">48 000 /sec</td><td class="num">68 600 /sec</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Bug five: an ok that did nothing</h2>
+
+  <p>Making the quorum faster made one cluster test fail more often — the test that
+     rewinds a replica to a newer delete underneath the cluster, reads to repair it, then
+     adds the key back and expects to see it. It had been flaky for days on the on-disk
+     engine, and I had filed it under timing. It was a bug.</p>
+
+  <p>A write is stamped by the clock of the node that coordinates it. The repair that the
+     read triggered goes out asynchronously from a <em>different</em> node, so the add that
+     followed could be stamped by a coordinator that had not heard of the delete yet — with
+     a lower stamp. Every replica then kept the delete, as last-writer-wins says it should,
+     and every replica answered <code>ok</code> with the version it kept. The coordinator
+     counted those as acknowledgements. The client was told the key was added; it was
+     not.</p>
+
+  <p>The fix is to read the answers. A replica already returns the winner of its merge;
+     if that is not the record the coordinator sent, the coordinator raises its clock past
+     it and writes once more, with the stamp it would have used had it known. On the common
+     path every winner is the record just sent, and it costs nothing. A test now builds
+     that state on purpose and failed until the change; the flaky one has passed twenty
+     runs in a row since.</p>
+
+  <blockquote>
+    <p>It took a performance change to expose a correctness bug, which is the argument for
+       not leaving a flaky test flaky. "Fails one run in three" was the only symptom of a
+       write that could be acknowledged and lost.</p>
+  </blockquote>
 
   <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
 
@@ -583,7 +657,7 @@ remove  →  delete</code></pre>
        every member in memory at 30 bytes each. The on-disk engine keeps 3: a billion
        keys is roughly 3 GB of RAM against 30. Until 0.8.1 the price of that was an
        11 µs read for any key that was present — 28.7 in 0.8.0 — and it is 3.4 µs now.
-       Over HTTP that is 70% of the in-memory engine's rate on a hit and all of it on a
+       Over HTTP that is 75% of the in-memory engine's rate on a hit and all of it on a
        miss, and a miss is the usual answer to "have I seen this?"</li>
     <li><strong>Exact where a filter guesses.</strong> A Bloom filter, including RedisBloom,
        answers "probably" and cannot forget a key. This answers yes or no, deletes, and
@@ -607,14 +681,14 @@ remove  →  delete</code></pre>
   <p>The pattern is the one the whole project keeps finding: the cost of generality is
      paid in places a key-only store simply does not have. The read path was the missing
      piece: "it fits on disk" used to mean "it is three times slower when the answer is
-     yes". Now it means ten times the keys per gigabyte for 30% of the throughput on a
+     yes". Now it means ten times the keys per gigabyte for a quarter of the throughput on a
      hit and none on a miss — which, for a store whose usual answer is no, is the trade
      you want.</p>
 
   <p>So, plainly, when not to use this:</p>
 
   <ul>
-    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, ties on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
+    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, is about 20% faster on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
     <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0 — less of a gap than it used to be, but still a real one.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
     <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>
@@ -636,8 +710,8 @@ remove  →  delete</code></pre>
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 254 tests — run against both engines — plus
-       15 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
+    <p><strong>kurwadb</strong> is MIT-licensed, 257 tests — run against both engines — plus
+       17 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/ARCHITECTURE.md">Architecture, including what is deliberately missing</a> ·

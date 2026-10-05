@@ -123,6 +123,23 @@ replies must not accumulate in the mailbox of a long-lived process such as a
 gateway connection - they land in the collector's mailbox and die with it. There
 is a test for exactly that.
 
+Reads and writes of a key go through `Quorum.request/4`, which starts nothing but
+the collector. The collector sends the request to `Kurwa.Replica.Endpoint` on
+each remote replica - sixteen long-lived processes per node, picked by a hash of
+the key - and runs the local replica inline. Before 0.9.0 each replica call was a
+worker process plus an `:erpc.call`, which spawns again on the remote side;
+together they were a fifth of a quorum read. There is no process monitor on the
+endpoints, because monitoring a remote name costs two more signals over the wire
+and measured slower than `:erpc`. `:erlang.monitor_node/2` is what turns a node
+dropping mid-request into an immediate failure instead of a timeout.
+
+A coordinator also checks what the replicas kept. A replica answers a write with
+the winner of the merge, and if that is not the record just sent - the
+coordinator's Lamport clock was behind a version the replica already held - the
+write lost everywhere while every replica said ok. The coordinator raises its
+clock past the winner and writes once more, rather than acknowledging a write
+that did nothing.
+
 `r + w > n` gives read-your-writes per key. Weaker settings are allowed and
 warned about. When fewer than `w` replicas are reachable, the default is to lower
 the quorum to what exists and keep serving; `strict_quorum: true` fails the
@@ -302,9 +319,11 @@ the path and range to the reader for its scheduler and gets the block back.
 
 That last part is the second attempt. 0.8.0 kept a handle in every reading
 process, which is free in a process that lives and an `open` plus a `close` in
-one that does not - and the read path has no process that lives: `Kurwa.Quorum`
-runs each replica call in a fresh worker, and `:erpc` spawns one on the remote
-side. 28.7 µs a read, measured from a fresh process; 3.4 through the pool.
+one that does not - and the read path had no process that lives: `Kurwa.Quorum`
+ran each replica call in a fresh worker, and `:erpc` spawned one on the remote
+side. (0.9.0 removed both: the local read now runs in the collector, which is still
+short-lived, and a remote one in a long-lived endpoint. The reader pool serves
+either, so neither has to own a handle.) 28.7 µs a read, measured from a fresh process; 3.4 through the pool.
 
 The frame format helps the rest: the key lives in the frame header rather than
 inside the `term_to_binary` payload, so scanning a block compares bytes and
@@ -339,9 +358,10 @@ The rule for what may follow it: a narrow interface, pure CPU, no I/O, no
 awareness of the cluster, and short enough never to hold a scheduler. That rule
 excludes almost everything here, deliberately. This codebase is roughly 1 300
 lines of replication, 1 600 of storage and 1 500 of protocol frontends - and the
-entire node-to-node protocol is **79 lines**, because Erlang distribution
-already provides the transport, framing, serialisation, timeouts and up/down
-events. In Rust those 79 lines are a few thousand, and they are the part that is
+entire node-to-node protocol is about **100 lines of code** (`Kurwa.Replica` and,
+since 0.9.0, the endpoints that replaced `:erpc` on the hot path), because
+Erlang distribution already provides the transport, framing, serialisation,
+timeouts and up/down events. In Rust those lines are a few thousand, and they are the part that is
 hard to get right: two of the bugs found in this project were in placement and
 membership, and both fixes were ten-line changes precisely because the transport
 underneath already worked.

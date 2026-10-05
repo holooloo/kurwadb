@@ -9,7 +9,15 @@ defmodule Kurwa.Quorum do
   with it.
 
   `fun` is called with a node and must return `{:ok, value}` or `{:error, reason}`.
+
+  `request/4` is the hot-path version for reads and writes of one key. It sends
+  the request straight to `Kurwa.Replica.Endpoint` on each remote node and runs
+  the local one inline, so the only process it starts is the collector:
+  sending is asynchronous, and a worker per replica existed only to wait.
   """
+
+  alias Kurwa.Replica
+  alias Kurwa.Replica.Endpoint
 
   @type outcome :: %{ok: [{node(), term()}], failed: [{node(), term()}]}
 
@@ -28,6 +36,33 @@ defmodule Kurwa.Quorum do
     {collector, monitor} =
       spawn_monitor(fn -> collect(caller, tag, nodes, fun, need, timeout) end)
 
+    await(tag, collector, monitor, nodes, timeout)
+  end
+
+  @doc """
+  Sends `request` to every node, waiting for `need` successes or `timeout`.
+
+  Same outcome shape and the same guarantee as `run/4`: late replies land in
+  the collector and die with it. A node that drops off while we wait answers
+  at once through its monitor, rather than at the deadline.
+  """
+  @spec request([node()], Replica.request(), pos_integer(), timeout()) :: outcome()
+  def request(nodes, request, need, timeout)
+
+  def request([], _request, _need, _timeout), do: %{ok: [], failed: []}
+
+  def request(nodes, request, need, timeout)
+      when is_list(nodes) and is_integer(need) and need > 0 do
+    caller = self()
+    tag = make_ref()
+
+    {collector, monitor} =
+      spawn_monitor(fn -> send(caller, {tag, gather(nodes, request, need, timeout)}) end)
+
+    await(tag, collector, monitor, nodes, timeout)
+  end
+
+  defp await(tag, collector, monitor, nodes, timeout) do
     receive do
       {^tag, outcome} ->
         Process.demonitor(monitor, [:flush])
@@ -41,6 +76,74 @@ defmodule Kurwa.Quorum do
         Process.demonitor(monitor, [:flush])
         drain(tag)
         %{ok: [], failed: Enum.map(nodes, &{&1, :timeout})}
+    end
+  end
+
+  defp gather(nodes, request, need, timeout) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    name = Endpoint.name_for(request)
+    me = node()
+
+    # Remote first, so they are on the wire while the local replica answers.
+    #
+    # No process monitor on the endpoint: monitoring a remote name is a signal
+    # over the wire to set it up and another to take it down, and measured that
+    # made the quorum slower than :erpc. monitor_node/2 is bookkeeping in the
+    # local distribution layer and sends nothing, and it is what turns a node
+    # dropping mid-request into an answer now rather than at the deadline.
+    remote = Enum.reject(nodes, &(&1 == me))
+
+    # A node that is not distributed cannot reach anyone, and monitor_node/2
+    # raises rather than say so.
+    {pending, unreachable} =
+      if Node.alive?() do
+        pending =
+          Map.new(remote, fn node ->
+            true = :erlang.monitor_node(node, true)
+            ref = make_ref()
+            send({name, node}, {:kurwa_replica, {self(), ref}, request})
+            {ref, node}
+          end)
+
+        {pending, []}
+      else
+        {%{}, Enum.map(remote, &{&1, {:no_reply, :noconnection}})}
+      end
+
+    {ok, failed} =
+      if me in nodes do
+        case invoke(fn _ -> Replica.handle(request) end, me) do
+          {:ok, value} -> {[{me, value}], []}
+          {:error, reason} -> {[], [{me, reason}]}
+        end
+      else
+        {[], []}
+      end
+
+    replies(pending, need, deadline, ok, unreachable ++ failed)
+  end
+
+  defp replies(pending, need, deadline, ok, failed) do
+    if length(ok) >= need or map_size(pending) == 0 do
+      %{ok: ok, failed: failed}
+    else
+      wait = max(deadline - System.monotonic_time(:millisecond), 0)
+
+      receive do
+        {ref, node, {:ok, value}} when is_map_key(pending, ref) ->
+          replies(Map.delete(pending, ref), need, deadline, [{node, value} | ok], failed)
+
+        {ref, node, {:error, reason}} when is_map_key(pending, ref) ->
+          replies(Map.delete(pending, ref), need, deadline, ok, [{node, reason} | failed])
+
+        {:nodedown, down} ->
+          {gone, rest} = Map.split_with(pending, fn {_ref, node} -> node == down end)
+          lost = Enum.map(gone, fn {_ref, node} -> {node, {:no_reply, :noconnection}} end)
+          replies(rest, need, deadline, ok, lost ++ failed)
+      after
+        wait ->
+          %{ok: ok, failed: failed ++ Enum.map(Map.values(pending), &{&1, :timeout})}
+      end
     end
   end
 

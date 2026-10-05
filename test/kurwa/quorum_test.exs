@@ -87,4 +87,39 @@ defmodule Kurwa.QuorumTest do
     assert length(outcome.ok) == 2
     assert outcome.failed == []
   end
+
+  describe "request/4, the hot path" do
+    alias Kurwa.Record
+
+    test "the local replica answers inline" do
+      key = "quorum-request:#{System.unique_integer([:positive])}"
+      record = Record.new(key, 1, node(), true)
+
+      assert %{ok: [{_, winner}], failed: []} = Quorum.request([node()], {:put, record}, 1, 500)
+      assert Record.key(winner) == key
+      assert %{ok: [{_, ^winner}]} = Quorum.request([node()], {:get, key}, 1, 500)
+    end
+
+    # The endpoints carry no process monitor - it cost more than :erpc - so a
+    # node that is not there has to be reported by monitor_node, and promptly,
+    # not left to run out the clock.
+    test "a node that cannot be reached fails at once, not at the deadline" do
+      key = "quorum-request:#{System.unique_integer([:positive])}"
+      gone = :"nobody-#{System.unique_integer([:positive])}@127.0.0.1"
+
+      {micros, outcome} =
+        :timer.tc(fn -> Quorum.request([node(), gone], {:get, key}, 2, 5_000) end)
+
+      assert [{_, nil}] = outcome.ok
+      assert [{^gone, {:no_reply, :noconnection}}] = outcome.failed
+
+      assert div(micros, 1000) < 2_000,
+             "waited #{div(micros, 1000)}ms for a node that is not there"
+    end
+
+    test "a malformed request is an error, not a crash" do
+      assert %{ok: [], failed: [{_, {:bad_request, :nonsense}}]} =
+               Quorum.request([node()], :nonsense, 1, 500)
+    end
+  end
 end

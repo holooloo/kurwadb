@@ -654,19 +654,20 @@
         <p>Which is only worth saying if it can be checked, so every figure here comes
            from a script in <code>bench/</code> and every version gets a column in
            <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.
-           The concurrent figures below are lower than earlier releases showed: the machine
-           got slower, not the code — 0.4.0 re-run the same day lands lower still.</p>
+           HTTP figures from 0.9.0 on are measured with four load generators instead of one,
+           because one was the ceiling: the same server read 96,900 req/s with one and 133,900
+           with four.</p>
       </div>
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.8.1</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.9.0</th></tr></thead>
           <tbody>
-            <tr><td>Local membership check</td><td class="num">339 ns</td></tr>
-            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~49 µs</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">46k writes/s · 48k reads/s</td></tr>
-            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">106k req/s</td></tr>
-            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">396k keys/s</td></tr>
+            <tr><td>Local membership check</td><td class="num">361 ns</td></tr>
+            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~40 µs</td></tr>
+            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">65k writes/s · 69k reads/s</td></tr>
+            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">131k req/s</td></tr>
+            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">446k keys/s</td></tr>
             <tr><td>RAM per key, in-memory engine</td><td class="num">128 B · 152 B</td></tr>
             <tr><td>RAM per key, on-disk engine</td><td class="num">3.0 B</td></tr>
             <tr><td>Anti-entropy digest, 4096 buckets</td><td class="num">32 KB</td></tr>
@@ -675,8 +676,8 @@
       </div>
       <h2 style="margin-top:34px">Against Redis, on the same machine</h2>
       <p>Not our numbers against someone's published ones — Redis 8.0.3 built here, both
-         servers run one at a time, same client, same concurrency, same question, three runs
-         each on 5 October 2026. <code>bench/versus.sh</code> reproduces it.</p>
+         servers run one at a time, same concurrency, four client threads each, a million
+         requests, three runs on 6 October 2026. <code>bench/versus.sh</code> reproduces it.</p>
 
       <div class="scroll">
         <table>
@@ -684,23 +685,23 @@
             <tr><th scope="col">1M keys, 13 bytes each</th><th scope="col">RAM per key</th><th scope="col">Membership/sec</th></tr>
           </thead>
           <tbody>
-            <tr><td>Redis <code>SET</code> / <code>SISMEMBER</code>, RESP</td><td class="num">30.2 B</td><td class="num">102 400</td></tr>
-            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">103 300</td></tr>
-            <tr><td>kurwadb on-disk, HTTP + JSON, hit from disk</td><td class="num">3.0 B</td><td class="num">70 500</td></tr>
-            <tr><td>kurwadb on-disk, HTTP + JSON, miss</td><td class="num">3.0 B</td><td class="num">103 500</td></tr>
-            <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">48 000</td></tr>
+            <tr><td>Redis <code>SET</code> / <code>SISMEMBER</code>, RESP</td><td class="num">30.2 B</td><td class="num">142 800</td></tr>
+            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">118 900</td></tr>
+            <tr><td>kurwadb on-disk, HTTP + JSON, hit from disk</td><td class="num">3.0 B</td><td class="num">92 000</td></tr>
+            <tr><td>kurwadb on-disk, HTTP + JSON, miss</td><td class="num">3.0 B</td><td class="num">116 000</td></tr>
+            <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">68 600</td></tr>
           </tbody>
         </table>
       </div>
       <p>Redis is <b>4× more memory-efficient</b> than our in-memory engine — part of that
          is the Lamport stamp, origin, tombstone flag and expiry we store and it does not,
          the rest is BEAM overhead. The on-disk engine is <b>10× better than Redis</b>,
-         because what it keeps in RAM is a Bloom filter rather than the keys. Throughput is
-         a tie — HTTP and JSON against a binary protocol, within 2% on every run. The on-disk
-         engine, a million keys loaded and the one asked for on disk, answers a hit at 70%
-         of that and a miss at the same speed. An earlier version of this table showed the
-         in-memory figure for it, which was never measured; measuring it found 0.8.0 reading
-         at half this rate, fixed in 0.8.1.</p>
+         because what it keeps in RAM is a Bloom filter rather than the keys. On throughput
+         <b>Redis is about 20% faster</b> — the price of HTTP and JSON against a binary
+         protocol. This page called it a tie for a day; it was a tie between two
+         single-threaded benchmark clients. The on-disk engine, a million keys loaded
+         (<code>bench/lsm_http.sh</code>), answers a hit from disk at 75% of the in-memory
+         rate and a miss at the same speed.</p>
       <p>So the case for it is not speed on one node. It is a set that outgrows RAM and is
          still answered exactly, writes acknowledged by two machines instead of one, and no
          primary to fail over from —

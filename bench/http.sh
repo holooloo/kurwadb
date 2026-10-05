@@ -6,6 +6,8 @@
 # One node, n=1, so this measures the gateway and the store, not replication.
 set -euo pipefail
 
+. "$(dirname "$0")/ab_parallel.sh"
+
 PORT=${KURWA_BENCH_PORT:-4060}
 DIR=$(mktemp -d)
 BODY="$DIR/batch.json"
@@ -47,16 +49,15 @@ PY
 
 echo
 echo "GET /k/:key  — keep-alive, 64 concurrent"
-ab -n 30000 -c 64 -k -q "http://127.0.0.1:$PORT/k/benchkey" 2>/dev/null |
-  grep -E "Requests per second|Time per request: .*mean\)$|Failed requests"
+ab_parallel 120000 64 -k "http://127.0.0.1:$PORT/k/benchkey"
 
 echo
 echo "GET /k/:key  — new connection per request"
-ab -n 10000 -c 64 -q "http://127.0.0.1:$PORT/k/benchkey" 2>/dev/null |
-  grep -E "Requests per second|Failed requests"
+# One client on purpose: this one measures TCP setup in the kernel, and more
+# clients only add contention for it (four ab read 25 000 here, one 30 000).
+CLIENTS=1 ab_parallel 10000 64 "http://127.0.0.1:$PORT/k/benchkey"
 
 echo
 echo "POST /batch  — 100 keys per request, keep-alive"
-ab -n 3000 -c 16 -k -q -p "$BODY" -T application/json "http://127.0.0.1:$PORT/batch" 2>/dev/null |
-  grep -E "Requests per second|Failed requests"
+ab_parallel 8000 16 -k -p "$BODY" -T application/json "http://127.0.0.1:$PORT/batch"
 echo

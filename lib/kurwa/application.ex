@@ -17,6 +17,7 @@ defmodule Kurwa.Application do
         {Task.Supervisor, name: Kurwa.TaskSupervisor},
         Kurwa.Store.SSTable.Readers,
         Kurwa.Store.Supervisor,
+        Kurwa.Replica.Endpoint,
         Kurwa.Registry,
         Kurwa.Handoff,
         Kurwa.Cluster,

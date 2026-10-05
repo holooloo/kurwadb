@@ -21,8 +21,10 @@ A promise like that is only worth making if it can be checked, so:
 ```sh
 KURWA_DATA_DIR=tmp/bench mix run bench/local.exs   # footprint, layer costs, single node
 MIX_ENV=test mix run --no-start bench/cluster.exs  # three real nodes, quorum
-bench/http.sh                                      # the HTTP gateway, via ApacheBench
+bench/http.sh                                      # the HTTP gateway, via ApacheBench (CLIENTS=4 by default)
 bench/lsm_http.sh                                  # both engines over HTTP, 1M keys, hits on disk
+MIX_ENV=test mix run --no-start bench/quorum_parts.exs  # a quorum read, timed in parts
+bench/client_ceiling.sh                            # is the load generator the ceiling?
 ```
 
 Measured on Apple M4, 10 cores, Elixir 1.20.4 / OTP 29. All three cluster nodes
@@ -55,29 +57,33 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 | 0.8.0 |
-|---|---|---|---|---|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 33 ns |
-| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns | 292 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns | 339 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs | 1.60 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs | 1.78 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs | 5.08 µs |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs | 2.86 µs |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 | 0.8.0 | 0.9.0 |
+|---|---|---|---|---|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 33 ns | 31 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns | 292 ns | 320 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns | 339 ns | 361 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs | 1.60 µs | 1.59 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs | 1.78 µs | 1.90 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs | 5.08 µs | **4.52 µs** |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs | 2.86 µs | **2.23 µs** |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
-use it nothing. Every difference in this table is inside run-to-run variance.
+use it nothing. Every difference in this table up to 0.8.0 is inside run-to-run
+variance. 0.9.0 is not: `Kurwa.add` and `Kurwa.member?` now go through
+`Quorum.request`, which starts one process instead of two. The `Quorum.run` row
+is the old function, still used for `count` and the set registry. Mean of two
+runs.
 
 ## Three nodes, quorum (n=3 r=2 w=2)
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 |
-|---|---|---|---|---|---|---|
-| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs | — | 48.4 µs |
-| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs | — | 50.9 µs |
-| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec | 46 500 ops/sec | 46 200 ops/sec |
-| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec | 44 300 ops/sec | 48 000 ops/sec |
-| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec | 1 710 000 ops/sec | 1 859 000 ops/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 | 0.9.0 |
+|---|---|---|---|---|---|---|---|
+| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs | — | 48.4 µs | **38.0 µs** |
+| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs | — | 50.9 µs | **40.8 µs** |
+| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec | 46 500 ops/sec | 46 200 ops/sec | **64 600 ops/sec** |
+| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec | 44 300 ops/sec | 48 000 ops/sec | **68 600 ops/sec** |
+| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec | 1 710 000 ops/sec | 1 859 000 ops/sec | 1 645 000 ops/sec |
 
 **Read the last two columns together, not against the ones before them.** The
 cluster and HTTP benchmarks were not re-run for 0.5.0 – 0.7.0, which broke this
@@ -91,18 +97,38 @@ within a few percent, so the table above is unaffected.
 
 0.8.0 is the median of three runs; on the same day the same three runs spread
 from 43 400 to 49 600 for `add`, wider than the ±7% quoted above. The re-run
-0.4.0 column is a single run.
+0.4.0 column is a single run. 0.9.0 is the median of three, measured on
+2026-10-06 on the same machine - see [What 0.9.0 changed](#what-090-changed).
 
 ## HTTP gateway, one node
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 |
-|---|---|---|---|---|---|---|
-| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec | 119 000 req/sec | 103 000 req/sec | 106 000 req/sec |
-| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec | 33 400 req/sec | 28 200 req/sec | 30 000 req/sec |
-| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec | 3 967 req/sec — 396 700 keys/sec | 3 782 req/sec — 378 200 keys/sec | 3 962 req/sec — 396 200 keys/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 | 0.9.0, four clients |
+|---|---|---|---|---|---|---|---|
+| `GET /k/:key`, keep-alive, 64 conn | 113 000 req/sec | 126 000 req/sec | 123 000 req/sec | 119 000 req/sec | 103 000 req/sec | 106 000 req/sec | **130 700 req/sec** |
+| `GET /k/:key`, new connection each | ~~5 900~~ req/sec | 32 500 req/sec | 31 700 req/sec | 33 400 req/sec | 28 200 req/sec | 30 000 req/sec | 28 500 req/sec (one client) |
+| `POST /batch`, 100 keys per request | 3 891 req/sec — 389 100 keys/sec | 4 084 req/sec — 408 400 keys/sec | 3 956 req/sec — 395 600 keys/sec | 3 967 req/sec — 396 700 keys/sec | 3 782 req/sec — 378 200 keys/sec | 3 962 req/sec — 396 200 keys/sec | **4 460 req/sec — 446 000 keys/sec** |
 
 Same story as the cluster: 0.4.0 measured on 2026-10-05 is slower than 0.4.0
 measured in September, and 0.8.0 is at or above it on every row. Single runs.
+
+**The last column is measured differently, and most of its gain is that.** Up to
+0.8.0 a single `ab` produced the load, and `ab` is one thread. Split across
+processes at the same 64 connections in total, against the same 0.8.1 node:
+
+| `ab` processes | req/sec |
+|---|---|
+| 1 | 96 900 |
+| 2 | 119 200 |
+| 4 | **133 900** |
+| 8 | 131 300 |
+
+So every keep-alive figure before 0.9.0 was the client's ceiling, not the
+server's. `bench/http.sh` now runs four (`CLIENTS`, in `bench/ab_parallel.sh`)
+and sums them; past four the sum stops growing because the clients and the
+server share ten cores. The new-connection row stays on one client on purpose:
+it measures TCP setup in the kernel, and more clients only contend for that
+(four read 25 000). 0.9.0 is the median of three runs for keep-alive, two for
+the others.
 
 The struck-through figure is a bad measurement, not a slow release. It was taken
 by hand before `bench/http.sh` existed, immediately after a 30 000-request run,
@@ -112,6 +138,69 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## What 0.9.0 changed
+
+A quorum read took 52 µs on three nodes. Timed in parts, from inside a node of a
+real three-node cluster (`n=3 r=2`, one client):
+
+| | |
+|---|---|
+| `Kurwa.fetch`, whole | **52.5 µs** |
+| a bare send and receive to a process on another node | **29.9 µs** |
+| `:erpc.call` to another node, doing nothing | 40.3 µs |
+| `:erpc.call` to another node, `Replica.get` | 43.3 µs |
+| `Quorum.run`, three local targets doing nothing | 4.4 µs |
+| `Placement.targets` / local `Store.get` | 2.1 / 1.7 µs |
+
+Thirty of the fifty-two are one distribution round trip: two trips through the
+kernel's TCP stack on loopback. Nothing in this repository can shorten that, and
+on separate hosts it becomes the network instead. Of the rest, 10-13 µs was
+`:erpc`, which spawns a process on the remote node for every call, and 4-5 µs
+was the quorum, which started a collector and then a worker per replica.
+
+So the hot path no longer uses either. `Kurwa.Replica.Endpoint` is sixteen
+long-lived processes per node, registered by name; `Quorum.request/4` sends a
+read or a write straight to the endpoint on each remote node, runs the local one
+inline, and starts only the collector - sending is asynchronous, and the workers
+existed only to wait. Late replies still land in the collector and die with it.
+
+The first version was **slower** than what it replaced, 56 µs and 36 000 reads a
+second: it put a process monitor on each remote endpoint, and monitoring a remote
+name is a signal over the wire to set up and another to take down, on top of the
+request and the reply. Without them it was 40 µs. What the monitors were for -
+answering at once when a node drops mid-request, rather than at the deadline -
+now comes from `:erlang.monitor_node/2`, which is bookkeeping in the local
+distribution layer and sends nothing. It costs about 1 µs. A cluster test kills
+two replicas and asserts a request needing them returns in under three seconds
+against a ten-second timeout; with `monitor_node` removed, it fails.
+
+| 3 nodes, `n=3 r=2 w=2` | 0.8.1 | 0.9.0 |
+|---|---|---|
+| `add`, single client | 48.4 µs | **38.0 µs** |
+| `member?`, single client | 50.9 µs | **40.8 µs** |
+| `add`, 64 clients | 46 200 ops/sec | **64 600 ops/sec** (+40%) |
+| `member?`, 64 clients | 48 000 ops/sec | **68 600 ops/sec** (+43%) |
+
+What is left above the round trip is about 10 µs, and most of it is the
+remote endpoint and the collector waking up from sleep.
+
+### A write that said ok and did nothing
+
+The faster quorum made a flaky cluster test fail more often, and the test was
+right. A write is stamped by its coordinator's Lamport clock. If that clock is
+behind a version some replica already holds - a delete another node just
+repaired onto it, say - the write loses the merge on every replica, and every
+replica still answers `{:ok, winner}`. The coordinator counted those as
+acknowledgements and told the client `:ok`. The key stayed deleted.
+
+The coordinator now compares each winner with the record it sent. If any
+replica kept something else, the clock is raised past it and the write goes
+again, once - the stamp it would have had if this node had heard of that version
+first. It costs nothing on the common path, where every winner is the record
+just sent. A deterministic cluster test sets up exactly this; it failed before
+the change, and the flaky one has passed twenty runs in a row since, on both
+engines.
 
 ## Where an on-disk read actually goes
 
@@ -181,6 +270,16 @@ never written:
 |---|---|---|---|
 | key present (on disk for LSM) | 96 500 – 104 400 req/sec | 47 800 req/sec | **69 700 – 71 500 req/sec** |
 | key absent | 96 600 – 102 000 req/sec | 81 500 req/sec | **101 400 – 105 500 req/sec** |
+
+The same script on 0.9.0 with four clients instead of one, two runs - so these
+are the server's figures rather than `ab`'s:
+
+| `GET /k/:key`, 1M keys, 64 clients, 0.9.0 | ETS | LSM |
+|---|---|---|
+| key present (on disk for LSM) | 120 400 – 124 000 req/sec | **91 400 – 92 700 req/sec** |
+| key absent | 116 300 – 118 800 req/sec | **115 600 – 116 400 req/sec** |
+
+A hit from disk is 75% of the in-memory engine's rate; a miss is level.
 
 The fix: `Kurwa.Store.SSTable.Readers`, one long-lived process per scheduler that
 owns the raw handles. A read sends the path and the range to the reader for the
@@ -305,21 +404,25 @@ runs of each server, medians:
 | kurwadb, LSM engine | **3.0 B** |
 | a Bloom filter on its own | 1.2 B (false positives, no deletes) |
 
-Membership over the wire, one node, no replication on either side, 64 clients,
-200 000 requests:
+Membership over the wire, one node, no replication on either side, 64 clients:
 
-| | |
-|---|---|
-| | 2026-09-30 | 2026-10-05 |
-|---|---|---|
-| redis `SISMEMBER` (RESP) | 142 600 req/sec, p50 0.24 ms | 102 400 req/sec, p50 0.33 ms |
-| kurwadb `GET /k/:key` (HTTP/1.1 + JSON) | 115 000 – 123 000 req/sec | 103 300 req/sec |
-| kurwadb, same question across a 3-node quorum | 59 000 /sec | 48 000 /sec |
+| | 2026-09-30 | 2026-10-05 | 2026-10-06, four client threads |
+|---|---|---|---|
+| redis `SISMEMBER` (RESP) | 142 600 req/sec, p50 0.24 ms | 102 400 req/sec, p50 0.33 ms | **142 800 req/sec**, p50 0.31 ms |
+| kurwadb `GET /k/:key` (HTTP/1.1 + JSON) | 115 000 – 123 000 req/sec | 103 300 req/sec | **118 900 req/sec** |
+| kurwadb, same question across a 3-node quorum | 59 000 /sec | 48 000 /sec | 68 600 /sec |
 
-The same Redis binary lost 28% between the two dates, which is the clearest
+The same Redis binary lost 28% between the first two dates, which is the clearest
 evidence that the drop in the cluster and HTTP tables above is the machine: Redis
-did not change, and neither did the gap. On the second date the two servers tie,
-within 2% on every run.
+did not change. On the second date the two servers looked tied, within 2% on
+every run - **and that tie was the clients, not the servers.** `redis-benchmark`
+is single-threaded by default exactly as `ab` is, and both had hit their own
+ceiling. On the third date each side gets four client threads
+(`redis-benchmark --threads 4`, four `ab` summed) and a million requests rather
+than 200 000 - at 200 000 a Redis run lasts about a second and its rate comes
+out quantised (160 000, 133 333). Medians of three: **Redis is about 20%
+faster.** The range was 137 900 – 153 800 for Redis and 117 600 – 121 300 for
+kurwadb.
 
 `bench/versus.sh` measures kurwadb with one key in the default engine, so its
 throughput line is the in-memory engine only. The site used to show the same
@@ -339,8 +442,10 @@ recover maybe half of it.
 interesting direction and is not a language question at all: what is in RAM is a
 Bloom filter, not the keys.
 
-**Throughput is a tie** on the second date, despite HTTP and JSON against a binary
-protocol; on the first, Redis led by about 15%.
+**Redis is about 20% faster** on throughput, measured with clients that are not
+the bottleneck. That is the cost of HTTP and JSON against a binary protocol, and
+the honest way to close it is a binary protocol, not a faster HTTP server. An
+earlier version of this file called it a tie; it was a tie between two clients.
 
 Two caveats on the Redis side: it was built here without jemalloc (`malloc=libc`),
 which usually costs it a little memory, and a single Redis node is not doing the

@@ -11,9 +11,11 @@
 # storage.
 set -euo pipefail
 
+. "$(dirname "$0")/ab_parallel.sh"
+
 REDIS_DIR=${REDIS_DIR:-}
 KEYS=${KEYS:-1000000}
-REQUESTS=${REQUESTS:-200000}
+REQUESTS=${REQUESTS:-1000000}
 CONCURRENCY=${CONCURRENCY:-64}
 RPORT=${RPORT:-7799}
 KPORT=${KPORT:-4070}
@@ -66,7 +68,9 @@ echo "=============== membership, 1 node, over the wire ==============="
 echo
 
 # -q still streams progress lines; only the last one is the result
-"$REDIS_DIR/redis-benchmark" -p "$RPORT" -n "$REQUESTS" -c "$CONCURRENCY" -q \
+# Both clients get the same number of threads: redis-benchmark is single
+# threaded by default, as ab is, and either one alone was the ceiling.
+"$REDIS_DIR/redis-benchmark" -p "$RPORT" -n "$REQUESTS" -c "$CONCURRENCY" --threads "$CLIENTS" -q \
   SISMEMBER seen order:1000500 2>/dev/null | tr '\r' '\n' | grep "requests per second" | tail -1 |
   sed 's/^/  redis RESP    /'
 
@@ -85,7 +89,7 @@ curl -fsS -X PUT -o /dev/null "http://127.0.0.1:$KPORT/k/order:1000500"
 ab -n 5000 -c 32 -k -q "http://127.0.0.1:$KPORT/k/order:1000500" >/dev/null 2>&1
 sleep 2
 
-ab -n "$REQUESTS" -c "$CONCURRENCY" -k -q "http://127.0.0.1:$KPORT/k/order:1000500" 2>/dev/null |
+ab_parallel "$REQUESTS" "$CONCURRENCY" -k "http://127.0.0.1:$KPORT/k/order:1000500" |
   grep "Requests per second" | sed 's/^/  kurwadb HTTP  /'
 
 echo

@@ -33,8 +33,8 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 254 tests, ~3s
-mix test --include cluster        # 15 more, ~11s: three real nodes, three real BEAMs
+mix test                          # 257 tests, ~3s
+mix test --include cluster        # 17 more, ~12s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 ```
 
@@ -196,11 +196,11 @@ One laptop, all three nodes sharing the same CPU.
 
 | | |
 |---|---|
-| local membership check | 338 ns |
-| quorum write / read across 3 nodes | ~49 µs single-client latency |
-| the same, 64 concurrent clients | 46k writes/sec, 48k reads/sec |
-| `GET /k/:key` over HTTP, keep-alive | 106k req/sec |
-| `POST /batch`, 100 keys per request | 396k keys/sec |
+| local membership check | 361 ns |
+| quorum write / read across 3 nodes | ~40 µs single-client latency |
+| the same, 64 concurrent clients | 65k writes/sec, 69k reads/sec |
+| `GET /k/:key` over HTTP, keep-alive | 131k req/sec |
+| `POST /batch`, 100 keys per request | 446k keys/sec |
 | RAM per key | 128 B (13-byte keys), 152 B (36-byte keys) |
 
 ```sh

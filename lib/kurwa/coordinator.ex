@@ -68,7 +68,7 @@ defmodule Kurwa.Coordinator do
       targets = placement.up
       r = quorum_size(Keyword.get(opts, :r, Config.r()), targets)
 
-      outcome = Quorum.run(targets, &replica_get(&1, key, timeout), r, timeout)
+      outcome = Quorum.request(targets, {:get, key}, r, timeout)
 
       if length(outcome.ok) >= r do
         winner = outcome.ok |> Enum.map(fn {_node, record} -> record end) |> Record.merge_all()
@@ -112,25 +112,51 @@ defmodule Kurwa.Coordinator do
     end
   end
 
-  defp write(key, alive?, opts) do
+  # A write stamped by a coordinator whose clock is behind what a replica
+  # already holds loses the merge on every replica - and each of them still
+  # answers {:ok, winner}, so it used to be acknowledged as done when it had
+  # done nothing. Seen through a delete that a read on another node had just
+  # repaired, with the add that followed it coordinated here: "ok", and the key
+  # still absent.
+  #
+  # So the replies are checked. If the winner is not our record, the clock is
+  # raised past it and the write goes again, once - which is what it would have
+  # been stamped with had this node heard of that version first.
+  defp write(key, alive?, opts), do: write(key, alive?, opts, 2)
+
+  defp write(key, alive?, opts, attempts) do
     with {:ok, placement} <- placement(key, opts) do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
       targets = placement.up
       w = quorum_size(Keyword.get(opts, :w, Config.w()), targets)
       record = Record.new(key, Clock.tick(), node(), alive?, nil, expiry(opts))
 
-      outcome = Quorum.run(targets, &replica_put(&1, record, timeout), w, timeout)
+      outcome = Quorum.request(targets, {:put, record}, w, timeout)
 
-      if length(outcome.ok) >= w do
-        # We told the client yes, so every replica that did not take the write
-        # gets a hint: the ones that were unreachable, and the ones that tried
-        # and failed. A replayed hint is an ordinary idempotent put.
-        failed = Enum.map(outcome.failed, fn {node, _reason} -> node end)
-        Handoff.store_all(placement.down ++ failed, record)
-        :ok
+      newer =
+        for {_node, winner} <- outcome.ok,
+            not Record.same_version?(winner, record),
+            do: Record.lamport(winner)
+
+      if newer != [] and attempts > 1 do
+        Clock.observe(Enum.max(newer))
+        write(key, alive?, opts, attempts - 1)
       else
-        {:error, {:quorum_not_met, details(:write, w, placement, outcome)}}
+        finish_write(outcome, w, placement, record)
       end
+    end
+  end
+
+  defp finish_write(outcome, w, placement, record) do
+    if length(outcome.ok) >= w do
+      # We told the client yes, so every replica that did not take the write
+      # gets a hint: the ones that were unreachable, and the ones that tried
+      # and failed. A replayed hint is an ordinary idempotent put.
+      failed = Enum.map(outcome.failed, fn {node, _reason} -> node end)
+      Handoff.store_all(placement.down ++ failed, record)
+      :ok
+    else
+      {:error, {:quorum_not_met, details(:write, w, placement, outcome)}}
     end
   end
 
@@ -170,26 +196,6 @@ defmodule Kurwa.Coordinator do
       configured
     else
       max(min(configured, length(prefs)), 1)
-    end
-  end
-
-  defp replica_put(node, record, timeout) do
-    if node == node() do
-      case Store.put(record) do
-        {:ok, winner} -> {:ok, winner}
-        {:stale, winner} -> {:ok, winner}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      :erpc.call(node, Kurwa.Replica, :put, [record], timeout)
-    end
-  end
-
-  defp replica_get(node, key, timeout) do
-    if node == node() do
-      Store.get(key)
-    else
-      :erpc.call(node, Kurwa.Replica, :get, [key], timeout)
     end
   end
 

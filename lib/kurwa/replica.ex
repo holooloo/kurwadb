@@ -3,12 +3,26 @@ defmodule Kurwa.Replica do
   The surface one node exposes to its peers.
 
   Every cross-node call in kurwadb goes through this module, so the wire
-  protocol between nodes is exactly these five functions. Records arriving here
+  protocol between nodes is exactly these functions: reached through
+  `Kurwa.Replica.Endpoint` on the hot path, and through `:erpc` for everything
+  else. Records arriving here
   came off the network, so they are shape-checked before they reach the engine.
   """
 
   alias Kurwa.Record
   alias Kurwa.Store
+
+  @type request :: {:get, Record.key()} | {:put, Record.t()}
+
+  @doc """
+  Runs one hot-path request: a read or a write of one key. This is what
+  `Kurwa.Replica.Endpoint` calls for a request that came from another node, and
+  what `Kurwa.Quorum.request/4` calls inline for the local replica.
+  """
+  @spec handle(request()) :: {:ok, Record.t() | nil} | {:error, term()}
+  def handle({:get, key}), do: get(key)
+  def handle({:put, record}), do: put(record)
+  def handle(other), do: {:error, {:bad_request, other}}
 
   @doc "Merges a replicated record into the local copy and returns the winner."
   @spec put(Record.t()) :: {:ok, Record.t()} | {:error, term()}

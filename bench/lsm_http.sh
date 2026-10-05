@@ -17,9 +17,11 @@
 # the best case for one that does not.
 set -euo pipefail
 
+. "$(dirname "$0")/ab_parallel.sh"
+
 PORT=${KURWA_BENCH_PORT:-4061}
 KEYS=${KEYS:-1000000}
-REQUESTS=${REQUESTS:-200000}
+REQUESTS=${REQUESTS:-1000000}
 CONCURRENCY=${CONCURRENCY:-64}
 WORK=$(mktemp -d)
 
@@ -69,9 +71,9 @@ PY
   sleep 2
 
   local hit miss
-  hit=$(ab -n "$REQUESTS" -c "$CONCURRENCY" -k -q "http://127.0.0.1:$PORT/k/$PRESENT" 2>/dev/null |
+  hit=$(ab_parallel "$REQUESTS" "$CONCURRENCY" -k "http://127.0.0.1:$PORT/k/$PRESENT" |
     awk '/Requests per second/ {print $4}')
-  miss=$(ab -n "$REQUESTS" -c "$CONCURRENCY" -k -q "http://127.0.0.1:$PORT/k/$ABSENT" 2>/dev/null |
+  miss=$(ab_parallel "$REQUESTS" "$CONCURRENCY" -k "http://127.0.0.1:$PORT/k/$ABSENT" |
     awk '/Requests per second/ {print $4}')
 
   printf "  %-4s  present %9s req/sec   absent %9s req/sec   tables flushed %2s\n" \
