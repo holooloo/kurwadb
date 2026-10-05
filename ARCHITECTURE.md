@@ -290,14 +290,21 @@ memory, wrong in one direction only. Measured on 200k keys: a present key costs
 engine, which is the right way round for a store whose usual answer is "not
 seen".
 
-Getting the present case from 11.8 µs to 3.6 took profiling the parts rather
+Getting the present case from 11.8 µs to 3.4 took profiling the parts rather
 than the whole, and the answer was not where it looked. With the filter already
 native, the `pread` was 83% of the read and the filter 1%. The handle had been
 opened without `:raw` so that any process could use it, and a non-raw handle is
 a message round trip to the process owning the file: 6.41 µs against 1.46 for
 the same 1 KB. Tables now hold no handle at all - they are plain data, which is
-what belongs in `:persistent_term` anyway - and each reading process keeps its
-own raw handle, capped so a compacted table cannot pin inodes.
+what belongs in `:persistent_term` anyway - and the raw handles live in
+`Kurwa.Store.SSTable.Readers`, one long-lived process per scheduler. A read sends
+the path and range to the reader for its scheduler and gets the block back.
+
+That last part is the second attempt. 0.8.0 kept a handle in every reading
+process, which is free in a process that lives and an `open` plus a `close` in
+one that does not - and the read path has no process that lives: `Kurwa.Quorum`
+runs each replica call in a fresh worker, and `:erpc` spawns one on the remote
+side. 28.7 µs a read, measured from a fresh process; 3.4 through the pool.
 
 The frame format helps the rest: the key lives in the frame header rather than
 inside the `term_to_binary` payload, so scanning a block compares bytes and

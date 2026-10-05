@@ -35,7 +35,7 @@ defmodule Kurwa.Store.SSTable do
   """
 
   alias Kurwa.Store.Bloom
-  alias Kurwa.Store.SSTable.Fd
+  alias Kurwa.Store.SSTable.{Fd, Readers}
 
   @magic "KSST3\n"
   @trailer "KSSTEND"
@@ -173,7 +173,7 @@ defmodule Kurwa.Store.SSTable do
   handles and drop them when they are evicted or when they exit.
   """
   @spec close(t()) :: :ok
-  def close(%__MODULE__{path: path}), do: Fd.release(path)
+  def close(%__MODULE__{path: path}), do: Readers.release(path)
 
   @doc """
   The record for `key`, or `nil`.
@@ -186,8 +186,7 @@ defmodule Kurwa.Store.SSTable do
     if Bloom.member?(table.bloom, table.bits, table.hashes, key) do
       {from, to} = block_for(table, key)
 
-      with {:ok, fd} <- Fd.for(table.path),
-           {:ok, block} <- read_at(fd, from, to - from) do
+      with {:ok, block} <- read_block(table.path, from, to - from) do
         find(block, key)
       else
         _ -> nil
@@ -376,6 +375,18 @@ defmodule Kurwa.Store.SSTable do
   end
 
   defp find(_partial, _key), do: nil
+
+  defp read_block(_path, _offset, 0), do: {:ok, <<>>}
+
+  defp read_block(path, offset, length) when length > 0 do
+    case Readers.pread(path, offset, length) do
+      {:ok, data} -> {:ok, data}
+      :eof -> {:error, :eof}
+      error -> error
+    end
+  end
+
+  defp read_block(_path, _offset, _length), do: {:error, :bad_range}
 
   defp read_at(_fd, _offset, 0), do: {:ok, <<>>}
 

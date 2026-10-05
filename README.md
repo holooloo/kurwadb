@@ -33,7 +33,7 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 250 tests, ~3s
+mix test                          # 254 tests, ~3s
 mix test --include cluster        # 15 more, ~11s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 ```

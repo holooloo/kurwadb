@@ -6,6 +6,10 @@
 alias Kurwa.Record
 alias Kurwa.Store.{Ets, Lsm, SSTable}
 
+# The pool the application starts; without it reads fall back to a handle in the
+# calling process, which is not the path a real request takes.
+{:ok, _} = SSTable.Readers.start_link()
+
 count = 200_000
 dir = "tmp/bench-engines"
 File.rm_rf!(dir)
@@ -48,11 +52,23 @@ on_disk =
 {lsm_read, _} = :timer.tc(fn -> for k <- Enum.take_random(keys, 20_000), do: Lsm.get(Lsm.handle(:bench_lsm), k) end)
 {lsm_miss, _} = :timer.tc(fn -> for i <- 1..20_000, do: Lsm.get(Lsm.handle(:bench_lsm), "absent:#{i}") end)
 
+# What a request does: Kurwa.Quorum and :erpc run every replica read in a
+# process that did not exist a moment ago. Measured that way, minus the spawn.
+in_fresh = fn f ->
+  {pid, ref} = spawn_monitor(f)
+  receive do {:DOWN, ^ref, :process, ^pid, _} -> :ok end
+end
+
+sample = Enum.take_random(keys, 20_000)
+{spawned, _} = :timer.tc(fn -> for _ <- sample, do: in_fresh.(fn -> :ok end) end)
+{fresh_read, _} = :timer.tc(fn -> for k <- sample, do: in_fresh.(fn -> Lsm.get(Lsm.handle(:bench_lsm), k) end) end)
+
 IO.puts("\nLSM engine (everything flushed to disk)")
 IO.puts("  resident          #{Float.round(lsm_ram / 1024 / 1024, 2)} MB  (#{Float.round(lsm_ram / count, 2)} bytes/key)")
 IO.puts("  on disk           #{Float.round(on_disk / 1024 / 1024, 1)} MB")
 IO.puts("  get, present      #{Float.round(lsm_read / 20_000, 2)} us")
 IO.puts("  get, absent       #{Float.round(lsm_miss / 20_000, 2)} us  (the filter answers, no seek)")
+IO.puts("  get, present, from a fresh process  #{Float.round((fresh_read - spawned) / 20_000, 2)} us  (the path a request takes)")
 
 IO.puts("\nRAM per key: #{Float.round(ets_ram / count, 1)} B  ->  #{Float.round(lsm_ram / count, 2)} B")
 IO.puts("same machine holds #{Float.round(ets_ram / lsm_ram, 0)}x more keys\n")

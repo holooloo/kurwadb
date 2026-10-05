@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>A database that stores keys and nothing else</title>
-<meta name="description" content="What falls out of one constraint, and the three bugs that only turned up when I measured.">
+<meta name="description" content="What falls out of one constraint, and the four bugs that only turned up when I measured.">
 <meta name="author" content="kurwadb">
 <meta property="og:title" content="A database that stores keys and nothing else">
-<meta property="og:description" content="What falls out of one constraint, and the three bugs that only turned up when I measured.">
+<meta property="og:description" content="What falls out of one constraint, and the four bugs that only turned up when I measured.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://kurwadb.dev/article.html">
 <link rel="canonical" href="https://kurwadb.dev/article.html">
@@ -169,11 +169,11 @@
 
   <header class="post">
     <h1>A database that stores keys and nothing else</h1>
-    <p class="dek">One constraint, followed all the way down — and the three bugs that
+    <p class="dek">One constraint, followed all the way down — and the four bugs that
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 17 minutes</span>
+      <span>about 19 minutes</span>
       <span>re-measured 5 October 2026</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
@@ -436,7 +436,7 @@ remove  →  delete</code></pre>
         <tr><td>before any of this</td><td class="num">11.8 µs</td></tr>
         <tr><td>Bloom filter in Rust</td><td class="num">11.0 µs</td></tr>
         <tr><td>key moved out of the encoded payload</td><td class="num">10.0 µs</td></tr>
-        <tr><td>raw file handles</td><td class="num">3.6 µs</td></tr>
+        <tr><td>raw file handles, in the benchmark</td><td class="num">3.6 µs</td></tr>
       </tbody>
     </table>
   </div>
@@ -460,6 +460,44 @@ remove  →  delete</code></pre>
   <p>It is optional, too: without <code>cargo</code> the project compiles, the Elixir
      implementation is used, and a test checks that the two agree on six thousand probes.
      A filter that disagrees with itself is a filter that says no to a key it holds.</p>
+
+  <h2>Bug four: the benchmark ran in the wrong process</h2>
+
+  <p>That 3.6 µs was true, and it was not what a request paid. Measuring the on-disk
+     engine over HTTP for the first time — a million keys loaded, eight tables on disk,
+     a key from the first batch — it answered 47,800 requests a second against 104,000
+     for the in-memory engine. A 3.6 µs read cannot halve anything at that rate.</p>
+
+  <p>A raw handle belongs to the process that opened it, so the fix had cached one per
+     process. The benchmark reads from a single process, opened each file once, and never
+     saw the cost again. A real read never runs in a process that lives: the quorum gives
+     every replica call a fresh worker so that late replies die with it, and a call from
+     another node arrives through <code>:erpc</code>, which spawns one too. So every read
+     opened the file, read one block, and closed it as the worker exited.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>On-disk read of a key that is present</th><th></th></tr></thead>
+      <tbody>
+        <tr><td>0.7.0, a shared handle</td><td class="num">11.0 µs</td></tr>
+        <tr><td>0.8.0, from the benchmark's one process</td><td class="num">2.55 µs</td></tr>
+        <tr><td>0.8.0, from a fresh process — what a request did</td><td class="num">28.7 µs</td></tr>
+        <tr><td>0.8.1, a pool of readers that own the handles</td><td class="num">3.4 µs</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The release that was three times faster in the benchmark was two and a half times
+     slower in use. The fix is a reader per scheduler that opens each table once and keeps
+     it: a read sends it the path and the range, and gets the block back as a
+     reference-counted binary, so nothing is copied. One message each way instead of an
+     <code>open</code> and a <code>close</code>.</p>
+
+  <blockquote>
+    <p>This is the second bug in this article that no test could have found, because
+       the answer was right every time. The lesson is narrower than "measure": measure the
+       path a request takes, from the process it takes it in. The benchmark now does.</p>
+  </blockquote>
 
   <h2>Measured against Redis, on the same machine</h2>
 
@@ -513,13 +551,25 @@ remove  →  delete</code></pre>
      what is being measured. HTTP with JSON against a binary protocol, and it no longer
      costs anything visible.</p>
 
-  <p>One correction while I was there. The site used to list the on-disk engine at
-     "115–123k" over HTTP as well. The script never measured that: it writes a single key
-     into whichever engine is the default and asks for it, so the figure was the in-memory
-     one copied across. The on-disk number that <em>is</em> measured is in-process — 3.6 µs
-     for a key that is present, 0.2 µs for one that is not — and over the wire it is now
-     marked as not measured until a script fills a million keys to disk and asks for
-     them.</p>
+  <p>The site used to list the on-disk engine at "115–123k" over HTTP as well. The script
+     never measured that: it writes a single key into whichever engine is the default, so
+     the figure was the in-memory one copied across. Measuring it properly is what found
+     bug four. With a million keys and the one asked for on disk:</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th><code>GET /k/:key</code>, 1M keys, 64 clients</th><th>In-memory</th><th>On-disk</th></tr></thead>
+      <tbody>
+        <tr><td>key present</td><td class="num">~100 000 /sec</td><td class="num">70 500 /sec</td></tr>
+        <tr><td>key absent</td><td class="num">~100 000 /sec</td><td class="num">103 500 /sec</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>A hit from disk costs 30% of the throughput; a miss costs nothing, because the filter
+     answers it without touching the file. The data set sits in the OS page cache here, so
+     "from disk" means a syscall answered from memory — the steady state for a set that
+     fits in page cache, and the best case for one that does not.</p>
 
   <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
 
@@ -531,9 +581,10 @@ remove  →  delete</code></pre>
   <ul>
     <li><strong>A set larger than RAM, answered exactly.</strong> Open-source Redis keeps
        every member in memory at 30 bytes each. The on-disk engine keeps 3: a billion
-       keys is roughly 3 GB of RAM against 30. Until 0.8.0 the price of that was an
-       11.8 µs read for any key that was present; it is 3.6 µs now, and an absent key — the
-       usual answer to "have I seen this?" — never leaves memory at all, in 200 ns.</li>
+       keys is roughly 3 GB of RAM against 30. Until 0.8.1 the price of that was an
+       11 µs read for any key that was present — 28.7 in 0.8.0 — and it is 3.4 µs now.
+       Over HTTP that is 70% of the in-memory engine's rate on a hit and all of it on a
+       miss, and a miss is the usual answer to "have I seen this?"</li>
     <li><strong>Exact where a filter guesses.</strong> A Bloom filter, including RedisBloom,
        answers "probably" and cannot forget a key. This answers yes or no, deletes, and
        expires keys on their own. It costs 3.0 bytes per key against the filter's 1.2 —
@@ -554,9 +605,11 @@ remove  →  delete</code></pre>
   </ul>
 
   <p>The pattern is the one the whole project keeps finding: the cost of generality is
-     paid in places a key-only store simply does not have. The read path being fast was
-     the missing piece — "it fits on disk" used to mean "it is three times slower when
-     the answer is yes", and that is no longer the trade.</p>
+     paid in places a key-only store simply does not have. The read path was the missing
+     piece: "it fits on disk" used to mean "it is three times slower when the answer is
+     yes". Now it means ten times the keys per gigabyte for 30% of the throughput on a
+     hit and none on a miss — which, for a store whose usual answer is no, is the trade
+     you want.</p>
 
   <p>So, plainly, when not to use this:</p>
 
@@ -583,7 +636,7 @@ remove  →  delete</code></pre>
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 250 tests — run against both engines — plus
+    <p><strong>kurwadb</strong> is MIT-licensed, 254 tests — run against both engines — plus
        15 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·

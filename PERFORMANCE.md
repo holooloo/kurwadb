@@ -22,6 +22,7 @@ A promise like that is only worth making if it can be checked, so:
 KURWA_DATA_DIR=tmp/bench mix run bench/local.exs   # footprint, layer costs, single node
 MIX_ENV=test mix run --no-start bench/cluster.exs  # three real nodes, quorum
 bench/http.sh                                      # the HTTP gateway, via ApacheBench
+bench/lsm_http.sh                                  # both engines over HTTP, 1M keys, hits on disk
 ```
 
 Measured on Apple M4, 10 cores, Elixir 1.20.4 / OTP 29. All three cluster nodes
@@ -147,12 +148,55 @@ a slightly smaller file, since the key is no longer stored twice.
 | 0.6.0 | 11.8 µs |
 | 0.7.0, Bloom in Rust | 11.0 µs |
 | 0.8.0, key out of the payload | 10.0 µs |
-| 0.8.0, raw file handles | **3.6 µs** |
+| 0.8.0, raw file handles | ~~3.6 µs~~ — **28.7 µs** as a request saw it |
+| 0.8.1, a pool of readers that own the handles | **3.4 µs** |
 
-Three times faster, and the part that did most of it was not the part written
-in Rust. That is the argument for measuring the pieces: a 60× improvement to 1%
-of the work is invisible, and the 83% was sitting in a one-line decision about
-how to open a file.
+0.8.0 was meant to be three times faster and was, in the benchmark. On the path
+a request actually takes it was **two and a half times slower** than 0.7.0, which
+makes it a broken release by the rule at the top of this file.
+
+## What 0.8.1 fixed
+
+A raw handle belongs to the process that opened it, and 0.8.0 cached one per
+process. `bench/engines.exs` reads from a single process, so it opened each file
+once and measured 3.6 µs. A real read never runs in a process that lives:
+`Kurwa.Quorum` gives every replica call a fresh worker, and a call from another
+node arrives through `:erpc`, which spawns one too. So every read opened the
+file, read one block, and closed it as the worker died:
+
+| on-disk `get`, key present, 0.8.0 | |
+|---|---|
+| from a process that already holds the handle | 2.55 µs |
+| from a fresh process - the real path | **28.7 µs** |
+| of which the spawn itself | 0.7 µs |
+
+Nothing caught it because nothing measured the real path. `bench/versus.sh`
+writes one key into the default engine, and the HTTP benchmark never touched the
+on-disk engine at all. `bench/lsm_http.sh` now does: a million keys into each
+engine through `POST /batch`, eight tables flushed (the script checks the log
+rather than assuming it), then a key from the first batch and a key that was
+never written:
+
+| `GET /k/:key`, 1M keys, 64 clients | ETS | LSM, 0.8.0 | LSM, 0.8.1 |
+|---|---|---|---|
+| key present (on disk for LSM) | 96 500 – 104 400 req/sec | 47 800 req/sec | **69 700 – 71 500 req/sec** |
+| key absent | 96 600 – 102 000 req/sec | 81 500 req/sec | **101 400 – 105 500 req/sec** |
+
+The fix: `Kurwa.Store.SSTable.Readers`, one long-lived process per scheduler that
+owns the raw handles. A read sends the path and the range to the reader for the
+caller's scheduler and gets the block back - a reference-counted binary, so no
+copy. One message each way instead of an `open` and a `close`. The handle cap
+went from 16 to 256 so a reader can hold every table of every shard, and a table
+removed by compaction is released in every reader.
+
+`bench/engines.exs` now starts the pool and also reports the read from a fresh
+process, so the number in this file is the one a request pays. The ~30% left
+between the engines on a hit is the `pread` itself; on a miss there is nothing
+left - the filter answers from memory and the two engines are level.
+
+The dataset is ~70 MB on disk and sits in the OS page cache, so a "present" read
+here is a syscall answered from memory, not an SSD seek. That is the steady state
+for a set that fits in page cache and the best case for one that does not.
 
 ## The native Bloom filter
 
@@ -206,7 +250,7 @@ KURWA_TEST_ENGINE=lsm mix test  # the on-disk one
 | resident, per key | 128.1 B | **3.01 B** |
 | resident, total | 24.4 MB | 0.57 MB |
 | on disk | — | 13.5 MB |
-| `get`, key present | 1.14 µs | **3.6 µs** |
+| `get`, key present, from a fresh process | 1.14 µs | **3.4 µs** |
 | `get`, key absent | 1.14 µs | **0.20 µs** |
 
 Two things to read out of that table. The same machine holds **43× more keys**,

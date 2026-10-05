@@ -14,14 +14,15 @@ defmodule Kurwa.Store.SSTable.Fd do
 
   The cache is capped. A table that compaction removed is deleted from disk, but
   a process still holding its handle keeps the inode alive, so the oldest
-  handles are closed once there are more than #{16} of them. Nothing reads a
+  handles are closed once there are more than #{256} of them - enough for a
+  long-lived reader to hold every table of every shard. Nothing reads a
   compacted table by accident - callers take the table list from
   `:persistent_term`, which the compaction replaced - so a stale handle is a
   leak to bound, not a correctness problem.
   """
 
   @key :kurwa_sstable_fds
-  @limit 16
+  @limit 256
 
   @doc "A raw read handle for `path`, opening one for this process if needed."
   @spec for(Path.t()) :: {:ok, term()} | {:error, term()}
