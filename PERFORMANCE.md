@@ -25,6 +25,7 @@ bench/http.sh                                      # the HTTP gateway, via Apach
 bench/lsm_http.sh                                  # both engines over HTTP, 1M keys, hits on disk
 MIX_ENV=test mix run --no-start bench/quorum_parts.exs  # a quorum read, timed in parts
 bench/client_ceiling.sh                            # is the load generator the ceiling?
+bench/pg.sh                                        # the PostgreSQL frontend under pgbench
 ```
 
 Measured on Apple M4, 10 cores, Elixir 1.20.4 / OTP 29. All three cluster nodes
@@ -138,6 +139,31 @@ reconnects per request is benchmarking TCP.
 
 `POST /batch` is the pipelining equivalent and remains the right tool above a few
 thousand keys per second.
+
+## The PostgreSQL frontend
+
+`bench/pg.sh`: one node, 100 000 keys, `SELECT key FROM kurwa WHERE key = ...`
+with a random key that is present (hit) or not (miss), 64 clients over four
+pgbench threads, ten seconds per run, two runs, 0.10.0:
+
+| pgbench mode | hit | miss |
+|---|---|---|
+| `simple` - one Query message | 136 500 – 146 600 tps | 135 400 – 143 500 tps |
+| `extended` - Parse, Bind, Describe, Execute, Sync each time | 126 800 – 133 700 tps | 125 300 – 131 900 tps |
+| `prepared` - Bind, Execute, Sync | **135 700 – 142 600 tps** | **138 600 – 142 600 tps** |
+
+The first version answered prepared statements at 70 000 and the extended mode
+at 62 000, half of the simple protocol. Nothing in the SQL was slow: the server
+wrote each reply message with its own syscall, so a prepared statement's three
+replies were three writes. Collecting the replies and writing them once the
+input in hand is handled - which is when PostgreSQL itself flushes - took both
+to the simple protocol's rate.
+
+These are within a few percent of what Redis answered over RESP on this
+machine (142 800 with `redis-benchmark --threads 4`), and about 15% above
+kurwadb's own HTTP gateway. The load generators differ, so that is a hint and
+not a measurement - but the hint is that the 20% Redis led by over HTTP was
+HTTP and JSON, not the store underneath.
 
 ## What 0.9.0 changed
 
@@ -276,10 +302,17 @@ are the server's figures rather than `ab`'s:
 
 | `GET /k/:key`, 1M keys, 64 clients, 0.9.0 | ETS | LSM |
 |---|---|---|
-| key present (on disk for LSM) | 120 400 – 124 000 req/sec | **91 400 – 92 700 req/sec** |
-| key absent | 116 300 – 118 800 req/sec | **115 600 – 116 400 req/sec** |
+| key present (on disk for LSM) | 124 300 – 127 700 req/sec | **92 900 – 93 000 req/sec** |
+| key absent | 120 400 – 124 200 req/sec | **118 300 – 120 200 req/sec** |
 
 A hit from disk is 75% of the in-memory engine's rate; a miss is level.
+
+These replace figures 2-3% lower that this table first carried for 0.9.0. Those
+were measured with the Elixir Bloom filter, not the Rust one: `cargo` was not on
+the path when the project recompiled, and `Kurwa.Native` falls back silently by
+design - which is right for a build and wrong for a benchmark. The four
+`BloomTest` cases that compare the two paths failed and said so; the benchmark
+did not. Check `Kurwa.Native.available?()` before measuring the on-disk engine.
 
 The fix: `Kurwa.Store.SSTable.Readers`, one long-lived process per scheduler that
 owns the raw handles. A read sends the path and the range to the reader for the

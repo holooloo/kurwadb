@@ -661,13 +661,14 @@
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.9.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.10.0</th></tr></thead>
           <tbody>
             <tr><td>Local membership check</td><td class="num">361 ns</td></tr>
             <tr><td>Quorum across 3 nodes, single client</td><td class="num">~40 µs</td></tr>
             <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">65k writes/s · 69k reads/s</td></tr>
             <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">131k req/s</td></tr>
             <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">446k keys/s</td></tr>
+            <tr><td>PostgreSQL protocol, prepared statements</td><td class="num">~140k tps</td></tr>
             <tr><td>RAM per key, in-memory engine</td><td class="num">128 B · 152 B</td></tr>
             <tr><td>RAM per key, on-disk engine</td><td class="num">3.0 B</td></tr>
             <tr><td>Anti-entropy digest, 4096 buckets</td><td class="num">32 KB</td></tr>
@@ -687,8 +688,8 @@
           <tbody>
             <tr><td>Redis <code>SET</code> / <code>SISMEMBER</code>, RESP</td><td class="num">30.2 B</td><td class="num">142 800</td></tr>
             <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">118 900</td></tr>
-            <tr><td>kurwadb on-disk, HTTP + JSON, hit from disk</td><td class="num">3.0 B</td><td class="num">92 000</td></tr>
-            <tr><td>kurwadb on-disk, HTTP + JSON, miss</td><td class="num">3.0 B</td><td class="num">116 000</td></tr>
+            <tr><td>kurwadb on-disk, HTTP + JSON, hit from disk</td><td class="num">3.0 B</td><td class="num">93 000</td></tr>
+            <tr><td>kurwadb on-disk, HTTP + JSON, miss</td><td class="num">3.0 B</td><td class="num">119 000</td></tr>
             <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">68 600</td></tr>
           </tbody>
         </table>
@@ -749,6 +750,34 @@ member kurwa3@10.0.0.3 down</span>
 <span class="k">echo</span> compact | 9p -a localhost:564 write ctl</pre>
       <p>No SDK, no vendor CLI. The key directories deliberately refuse to be
          listed: there are no scans here, and an empty listing would be a lie.</p>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">PostgreSQL</span></div>
+    <div class="col">
+      <h2>psql, and the driver you already have</h2>
+      <p>kurwadb speaks the PostgreSQL wire protocol. A set is a table with one column,
+         <code>key</code>, and the queries are the ones a set can answer without a scan.</p>
+<pre><span class="k">INSERT INTO</span> seen <span class="k">VALUES</span> ('order:1'), ('order:2');
+<span class="c">INSERT 0 2</span>
+
+<span class="k">SELECT</span> key <span class="k">FROM</span> seen <span class="k">WHERE</span> key <span class="k">IN</span> ('order:1', 'order:3');
+<span class="c"> key
+---------
+ order:1
+(1 row)</span>
+
+<span class="k">DELETE FROM</span> seen <span class="k">WHERE</span> key = 'order:1';
+<span class="c">DELETE 1</span>
+
+<span class="k">SELECT</span> * <span class="k">FROM</span> seen;
+<span class="c">ERROR:  SELECT from seen without WHERE key = ... would be a scan, and there are none</span></pre>
+      <p>Prepared statements and binary results, so psycopg and node-postgres work as they
+         are; <code>\dt</code> lists sets and <code>\d</code> describes one. There are no
+         transactions — <code>BEGIN</code> is accepted because drivers send it unasked,
+         and <code>ROLLBACK</code> says nothing was rolled back. Around 140,000 prepared
+         statements a second under pgbench, on one node.</p>
     </div>
   </section>
 

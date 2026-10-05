@@ -25,6 +25,8 @@ if config_env() != :test do
     http_port: int.("KURWA_HTTP_PORT", 4040),
     start_9p: System.get_env("KURWA_9P") in ~w(1 true),
     ninep_port: int.("KURWA_9P_PORT", 564),
+    start_pg: System.get_env("KURWA_PG") in ~w(1 true),
+    pg_port: int.("KURWA_PG_PORT", 5432),
     cache: System.get_env("KURWA_CACHE") in ~w(1 true),
     wal_sync_on_write: System.get_env("KURWA_WAL_SYNC_ON_WRITE") in ~w(1 true),
     engine:

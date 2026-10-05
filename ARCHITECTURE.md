@@ -7,10 +7,10 @@ deliberately still missing.
 ## Shape
 
 ```
-  clients                HTTP            9P2000
-                           |               |
-  frontends          Kurwa.Gateway   Kurwa.NineP        thin adapters, no logic
-                           \             /
+  clients              HTTP        9P2000      PostgreSQL
+                         |            |             |
+  frontends       Kurwa.Gateway  Kurwa.NineP   Kurwa.Pg + Kurwa.Sql   thin adapters
+                           \          |          /
   api                  Kurwa / Kurwa.Namespace          keys and named sets
                                  |
   read path          Kurwa.Extractor                    cache + single-flight
@@ -26,8 +26,8 @@ deliberately still missing.
 
 Nothing above `Coordinator` knows about replication, and nothing below it knows
 about protocols. That is what makes a new frontend cheap - 9P was added without
-touching the core - and what will let a disk engine be swapped in without
-touching the cluster.
+touching the core, and so was PostgreSQL - and what let a disk engine be swapped
+in without touching the cluster.
 
 ## The data model
 
@@ -423,13 +423,60 @@ until its TTL. So the cache turns a linearizable-per-key read into a
 bounded-staleness read, and the bound is the TTL. A test pins that behaviour down
 rather than leaving it implied.
 
-## Decided, not built
+## The PostgreSQL frontend
 
-**Fallback vnodes.** Today a write goes to the reachable primaries only, so while
-a replica is down the write has `n-1` copies until handoff runs. Dynamo-style
-fallbacks would write to a substitute node immediately, which means hints have to
-live with the data on the fallback rather than on the coordinator. That also
-makes hints survive a coordinator restart.
+`psql` and the PostgreSQL drivers connect to kurwadb as they would to
+PostgreSQL. A set is a table with one column, `key text`; the default set is the
+table `kurwa`. What a table can be asked is what the store can answer without a
+scan - insert keys, select them by key or `IN` list, count them by key, delete
+them by key - and `kurwa_*` functions cover what a table cannot say: TTLs, the
+cluster-wide count, forgetting a set.
+
+It is three layers, so that another SQL wire protocol only replaces the first:
+
+* `Kurwa.Pg.Server` and `Kurwa.Pg.Proto` - protocol 3.0, the simple query
+  protocol psql uses and the extended one (Parse, Bind, Describe, Execute,
+  Sync) drivers use for parameters and prepared statements, text and binary
+  formats, paging with `max_rows`.
+* `Kurwa.Sql.Lexer`, `Parser`, `Exec` - the statements, dialect-neutral.
+  `Exec.describe/1` types parameters by where they sit (a key is `text`, a ttl
+  `int8`), because Describe has to answer before anything runs.
+* `Kurwa.Pg.Catalog` - enough of `pg_catalog` for `\dt` and `\d` to list and
+  describe sets from the registry. Any other catalog query gets no rows with the
+  columns it asked for, by name, so a tool probing for something kurwadb lacks
+  carries on instead of meeting an error it did not expect.
+
+The mismatches, and what was chosen for each:
+
+* **Transactions.** There are none, and a frontend that pretends otherwise
+  misleads. But psycopg in its default mode sends `BEGIN` before the first
+  statement by itself, and pgjdbc does the same with autocommit off - refusing
+  `BEGIN` would refuse those drivers outright. So `BEGIN`, `COMMIT` and
+  `SAVEPOINT` are accepted, the transaction status in ReadyForQuery moves the
+  way PostgreSQL's does (`T`, and `E` after an error, until the block ends),
+  and `ROLLBACK` answers with a warning that every statement already took
+  effect. A client that relies on rollback is still wrong; it is at least told.
+* **Counts.** `DELETE` reports how many of the keys were members when it
+  looked, because "DELETE 1 or DELETE 0" is how an application consumes a
+  one-time token. The look and the delete are two operations, not one: two
+  clients consuming the same key at the same moment can both see 1.
+* **Scans.** `SELECT` without `WHERE key`, a `DELETE` without one, and a
+  `count(*)` of a whole set are refused with `0A000` and the reason. So are
+  `UPDATE` (a key has nothing to update) and `DROP TABLE` (it would have to find
+  the keys to delete them).
+* **TLS and auth.** SSLRequest is answered `N`, which libpq's default
+  `sslmode=prefer` accepts. With `auth_token` set, the password is the token,
+  sent in cleartext - the same exposure as the HTTP bearer token, and the same
+  advice: a trusted network, or a TLS-terminating proxy. SCRAM is the proper
+  answer and is not built.
+
+One measured detail. The server collects its replies and writes them once the
+input it has been handed is handled, instead of a write per message - a
+prepared statement's Bind, Execute and Sync then cost one syscall rather than
+three. Under pgbench that was the difference between 70 000 and 136 000
+transactions a second.
+
+## Decided, not built
 
 **Fallback vnodes.** A write still goes only to the reachable primaries, so
 while a replica is down the write has `n-1` copies on replicas plus a durable
@@ -450,45 +497,16 @@ the "key = hash(value)" model - and its arena plus separate index is a different
 blueprint for immutable on-disk sets than the LSM one, worth having if content
 addressing ever becomes the point.
 
-**Kurwa Proxy: native client protocols.** The idea is that a PostgreSQL, MySQL or
-MongoDB client talks to kurwadb with no adapter, over its own wire protocol. It
-is a real technique - CockroachDB, Materialize, QuestDB and RisingWave all speak
-the PostgreSQL wire protocol - and the mapping onto a key-only store is clean:
-
-```sql
-SELECT 1 FROM blacklist WHERE key = $1        -- Namespace.member?("blacklist", key)
-INSERT INTO blacklist(key) VALUES ($1)        -- Namespace.add
-DELETE FROM blacklist WHERE key = $1          -- Namespace.delete
-SELECT count(*) FROM blacklist                -- the approximate count
-SELECT 1 FROM a WHERE key=$1 UNION
-SELECT 1 FROM b WHERE key=$1                  -- member_any?(["a","b"], key)
-```
-
-A table is a set, which is the same idea as a directory being a set in 9P. The
-sensible implementation is a whitelist of query shapes, not a SQL parser.
-
-The honest part is where the cost actually is, and it is not the codec:
-
-* **Clients introspect before they work.** `psql \d`, ORMs and BI tools issue
-  large `pg_catalog` / `information_schema` queries first. Faking enough catalog
-  to survive them is most of the work, and it needs the set registry above.
-* **Clients assume scans, joins, `ORDER BY`, `LIMIT`.** kurwadb has none of them
-  on purpose. Anything beyond a point lookup has to be refused, and a refusal
-  from a "PostgreSQL" server surprises people.
-* **Transactions.** `BEGIN`/`COMMIT` over an LWW set with no MVCC can only be
-  accepted-and-ignored, which is a lie that breaks ORMs quietly. Refusing is
-  better and still surprising.
-* **Auth.** PostgreSQL means SCRAM-SHA-256; MySQL means `caching_sha2_password`,
-  which needs TLS or an RSA exchange. Neither is a weekend.
-* **MongoDB** is the easiest codec (OP_MSG plus BSON, no SQL to parse) and the
-  hardest handshake: drivers negotiate `hello`, monitor topology, open sessions
-  and expect cursors.
-
-So "any client, natively" is not one feature - it is one adapter per protocol,
-each with its own semantic mismatch to manage. The recommendation is one protocol
-done properly, PostgreSQL first, point lookups and point writes only, as another
-thin frontend over `Kurwa.Extractor`. The architecture is already ready for it;
-that is the part that matters today.
+**More wire protocols.** The SQL layer (`Kurwa.Sql.*`) is dialect-neutral on
+purpose - the lexer already knows MySQL's backticks and `?` parameters - so a
+MySQL frontend is a codec (handshake, `COM_QUERY`, `COM_STMT_PREPARE` /
+`COM_STMT_EXECUTE`) over the same parser and executor, not a second SQL engine.
+Its cost is auth: `caching_sha2_password` wants TLS or an RSA exchange. RESP,
+the Redis protocol, is the more useful next one - the people with a "have I
+seen this" set mostly have it in Redis, and `redis-benchmark` would then compare
+protocol with protocol. MongoDB maps cleanly (a collection is a set, a document
+is `{_id: key}`) but its drivers open with `hello`, SCRAM, sessions and cursor
+management, so it waits for someone who needs it.
 
 **Per-set statistics**, blocked on the thing this store does not do: counting a
 set's members is a scan.

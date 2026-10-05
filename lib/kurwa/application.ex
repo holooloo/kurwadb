@@ -24,7 +24,7 @@ defmodule Kurwa.Application do
         Kurwa.Repair,
         Kurwa.Extractor.Cache,
         Kurwa.Extractor.Flight
-      ] ++ gateway() ++ ninep()
+      ] ++ gateway() ++ ninep() ++ pg()
 
     Logger.info(
       "kurwadb: starting on #{node()} (n=#{Config.n()} r=#{Config.r()} w=#{Config.w()} " <>
@@ -45,6 +45,21 @@ defmodule Kurwa.Application do
 
   # Off by default: the registered 9P port needs privileges to bind, and not
   # every deployment wants a second frontend.
+  defp pg do
+    if Config.get(:start_pg) do
+      port = Config.get(:pg_port)
+
+      [
+        Supervisor.child_spec(
+          {ThousandIsland, port: port, handler_module: Kurwa.Pg.Server},
+          id: :kurwa_pg
+        )
+      ]
+    else
+      []
+    end
+  end
+
   defp ninep do
     if Config.get(:start_9p) do
       port = Config.get(:ninep_port)

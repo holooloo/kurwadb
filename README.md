@@ -33,9 +33,10 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 257 tests, ~3s
+mix test                          # 294 tests, ~3s
 mix test --include cluster        # 17 more, ~12s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
+mix test --include psql           # the real psql against the PostgreSQL frontend
 ```
 
 The cluster tests boot actual distributed nodes and assert the guarantees this
@@ -124,6 +125,35 @@ Off by default; port 564 is the registered one but needs privileges to bind.
 `/keys`, `/b64` and `/sets/<set>` refuse to be listed - kurwadb has no scans,
 and an empty listing would be a lie.
 
+## PostgreSQL
+
+`psql` and the PostgreSQL drivers connect as they would to PostgreSQL. A set is
+a table with one column, `key`; the default set is the table `kurwa`.
+
+```sh
+KURWA_PG=1 KURWA_PG_PORT=5433 iex -S mix
+psql "host=127.0.0.1 port=5433 dbname=kurwadb"
+```
+
+```sql
+INSERT INTO seen VALUES ('order:1'), ('order:2');
+INSERT INTO seen (key, ttl) VALUES ('session:9', 3600);   -- expires in an hour
+SELECT key FROM seen WHERE key IN ('order:1', 'order:3'); -- the members among these
+SELECT EXISTS (SELECT 1 FROM seen WHERE key = $1);
+DELETE FROM seen WHERE key = 'order:1';                   -- DELETE 1, or DELETE 0 if it was not there
+SELECT kurwa_ttl('seen', 'session:9'), kurwa_count();
+\dt                                                       -- sets, as tables
+```
+
+Without a `WHERE key`, a `SELECT` or `DELETE` is refused with the reason: it
+would be a scan. Simple and extended protocol, text and binary formats, so
+prepared statements in psycopg, node-postgres and the like work; the scripts in
+`test/drivers/` check two of them. `BEGIN` and `COMMIT` are accepted because
+drivers send them unasked, but there are no transactions: every statement takes
+effect when it runs, and `ROLLBACK` says so. TLS is declined, and with
+`auth_token` set the password is the token, in cleartext. The reasons are in
+[ARCHITECTURE.md](ARCHITECTURE.md#the-postgresql-frontend).
+
 ## Configuration
 
 Every setting has a default, so the app boots with no config at all. Environment
@@ -145,7 +175,8 @@ variables are read at boot (`config/runtime.exs`).
 | `cache` | | `false` | extractor cache; trades linearizable reads for bounded staleness |
 | `http_port` | `KURWA_HTTP_PORT` | 4040 | |
 | `start_9p` `ninep_port` | `KURWA_9P` `KURWA_9P_PORT` | `false`, 564 | |
-| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for the HTTP API |
+| `start_pg` `pg_port` | `KURWA_PG` `KURWA_PG_PORT` | `false`, 5432 | the PostgreSQL wire protocol |
+| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for the HTTP API, password for PostgreSQL |
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
 allowed and logged as a warning, because it is a real durability decision.
@@ -178,6 +209,8 @@ Kurwa.Store.Lsm       memtable plus sorted tables on disk, ~3 B of RAM per key
 Kurwa.Native          the little that is Rust: Bloom membership
 Kurwa.Gateway         HTTP
 Kurwa.NineP           9P2000
+Kurwa.Pg              the PostgreSQL wire protocol, and enough pg_catalog for psql
+Kurwa.Sql             the SQL a set understands, shared by any SQL frontend
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure

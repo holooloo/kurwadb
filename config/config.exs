@@ -56,7 +56,11 @@ config :kurwadb,
 
   # 9P frontend: off by default, and port 564 needs privileges to bind
   start_9p: false,
-  ninep_port: 564
+  ninep_port: 564,
+
+  # PostgreSQL wire protocol: psql and drivers, off by default
+  start_pg: false,
+  pg_port: 5432
 
 config :logger, level: :info
 
