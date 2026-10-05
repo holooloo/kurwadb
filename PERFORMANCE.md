@@ -251,7 +251,8 @@ another's and extrapolating is pointless. So this is not that: both servers were
 built and run on this machine, one at a time, asked the same question by a
 client with the same concurrency. `REDIS_DIR=... bench/versus.sh` reproduces it.
 
-Redis 8.0.3, one million 13-byte members in a `SET`:
+Redis 8.0.3, one million 13-byte members in a `SET`. Re-measured 2026-10-05, three
+runs of each server, medians:
 
 | | bytes per key |
 |---|---|
@@ -265,9 +266,20 @@ Membership over the wire, one node, no replication on either side, 64 clients,
 
 | | |
 |---|---|
-| redis `SISMEMBER` (RESP) | 142 600 req/sec, p50 0.24 ms |
-| kurwadb `GET /k/:key` (HTTP/1.1 + JSON) | 115 000 – 123 000 req/sec |
-| kurwadb, same question across a 3-node quorum | 59 000 /sec |
+| | 2026-09-30 | 2026-10-05 |
+|---|---|---|
+| redis `SISMEMBER` (RESP) | 142 600 req/sec, p50 0.24 ms | 102 400 req/sec, p50 0.33 ms |
+| kurwadb `GET /k/:key` (HTTP/1.1 + JSON) | 115 000 – 123 000 req/sec | 103 300 req/sec |
+| kurwadb, same question across a 3-node quorum | 59 000 /sec | 48 000 /sec |
+
+The same Redis binary lost 28% between the two dates, which is the clearest
+evidence that the drop in the cluster and HTTP tables above is the machine: Redis
+did not change, and neither did the gap. On the second date the two servers tie,
+within 2% on every run.
+
+`bench/versus.sh` measures kurwadb with one key in the default engine, so its
+throughput line is the in-memory engine only. The site used to show the same
+figure against the on-disk engine; that was never measured, and is now marked so.
 
 ### Reading that honestly
 
@@ -283,8 +295,8 @@ recover maybe half of it.
 interesting direction and is not a language question at all: what is in RAM is a
 Bloom filter, not the keys.
 
-**Throughput is within about 15%** despite HTTP and JSON against a binary
-protocol, which is closer than the protocols suggest.
+**Throughput is a tie** on the second date, despite HTTP and JSON against a binary
+protocol; on the first, Redis led by about 15%.
 
 Two caveats on the Redis side: it was built here without jemalloc (`malloc=libc`),
 which usually costs it a little memory, and a single Redis node is not doing the

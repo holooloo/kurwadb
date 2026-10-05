@@ -173,7 +173,8 @@
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 14 minutes</span>
+      <span>about 17 minutes</span>
+      <span>re-measured 5 October 2026</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
   </header>
@@ -216,7 +217,7 @@ def merge(a, b), do: if newer?(a, b), do: a, else: b   # total order on {lamport
      during failover; any node coordinates any key, and losing one costs capacity rather
      than availability. And because a key is its own payload, the replica-local answer is
      a single <code>:ets.lookup</code> in the caller's own process — no mailbox, no copy,
-     no serialisation. That path measures 361 nanoseconds.</p>
+     no serialisation. That path measures 338 nanoseconds.</p>
 
   <h2>An unexpected detour through Plan 9</h2>
 
@@ -360,17 +361,25 @@ remove  →  delete</code></pre>
   <h2>The numbers, and where they do not apply</h2>
 
   <p>On one laptop, all three nodes sharing the same CPU: a local membership check in
-     364 ns, a quorum across three nodes in about 45 µs, 55,000 writes and 59,000 reads
-     per second at 64 concurrent clients, 123,000 requests per second through the HTTP
+     338 ns, a quorum across three nodes in about 49 µs, 46,000 writes and 48,000 reads
+     per second at 64 concurrent clients, 106,000 requests per second through the HTTP
      gateway with keep-alive, and 128 bytes of RAM per key.</p>
+
+  <p>Those concurrent figures are lower than the ones this article first carried — 55,000,
+     59,000 and 123,000 — and the code is not why. Between September and October the
+     laptop got slower at anything that uses every core. Checking out the September
+     release and running it again gives the same lower numbers, and so does the
+     <em>same Redis binary</em>, which went from 142,600 to 102,400. Benchmarks from
+     different days on a laptop are different machines; only figures taken side by side
+     on the same day are compared below.</p>
 
   <p>That last number is the one that decides how much a machine can hold, which is why
      there is now a second engine. It keeps recent keys in memory and older ones in
      immutable sorted files, with nothing in RAM per table but a Bloom filter and a
      sparse index — three bytes per key rather than 128, so the same machine holds
      about 43 times more. The filter is what makes that work, and it pays off in the
-     direction that matters: a key that <em>is</em> there costs a seek at 11.8 µs, and a
-     key that is not is answered from memory in 380 nanoseconds, faster than the
+     direction that matters: at first, a key that <em>is</em> there cost a seek at 11.8 µs,
+     and a key that is not was answered from memory in 380 nanoseconds, faster than the
      in-memory engine manages. For a store whose usual answer is "no, not seen", the
      common case is the fast one.</p>
 
@@ -457,7 +466,8 @@ remove  →  delete</code></pre>
   <p>Redis's own guide is blunt that comparing one benchmark tool's output to another's
      and extrapolating is pointless. It is right, so I did not do that: I built Redis
      8.0.3 here and ran both servers on this laptop, one at a time, asked the same
-     question by a client with the same concurrency.</p>
+     question by a client with the same concurrency. Then, after the read path got three
+     times faster, I did it again — three runs each, same day, same machine.</p>
 
   <p>A million 13-byte members:</p>
 
@@ -478,9 +488,9 @@ remove  →  delete</code></pre>
   <div class="scroll">
     <table>
       <tbody>
-        <tr><td>redis <code>SISMEMBER</code> (RESP)</td><td class="num">142 600 /sec</td></tr>
-        <tr><td>kurwadb <code>GET /k/:key</code> (HTTP + JSON)</td><td class="num">115–123k /sec</td></tr>
-        <tr><td>kurwadb, same question across a 3-node quorum</td><td class="num">59 000 /sec</td></tr>
+        <tr><td>redis <code>SISMEMBER</code> (RESP)</td><td class="num">102 400 /sec</td></tr>
+        <tr><td>kurwadb <code>GET /k/:key</code> (HTTP + JSON)</td><td class="num">103 300 /sec</td></tr>
+        <tr><td>kurwadb, same question across a 3-node quorum</td><td class="num">48 000 /sec</td></tr>
       </tbody>
     </table>
   </div>
@@ -494,14 +504,64 @@ remove  →  delete</code></pre>
 
   <p>The interesting direction is the other one. <strong>The on-disk engine uses ten times
      less memory than Redis</strong>, and that is not a language question at all: what is
-     in RAM is a Bloom filter rather than the keys. Throughput lands within about 15% of
-     Redis despite HTTP and JSON against a binary protocol, which is closer than the
-     protocols suggest.</p>
+     in RAM is a Bloom filter rather than the keys.</p>
+
+  <p>Throughput is a tie: medians of 102,400 and 103,300, with every run of either inside
+     2% of the other. In September Redis led by 15%; today the laptop is slower and both
+     servers sit at the same ceiling, which says that at this concurrency neither is
+     limited by its storage any more — the loopback, the client and the protocol are
+     what is being measured. HTTP with JSON against a binary protocol, and it no longer
+     costs anything visible.</p>
+
+  <p>One correction while I was there. The site used to list the on-disk engine at
+     "115–123k" over HTTP as well. The script never measured that: it writes a single key
+     into whichever engine is the default and asks for it, so the figure was the in-memory
+     one copied across. The on-disk number that <em>is</em> measured is in-process — 3.6 µs
+     for a key that is present, 0.2 µs for one that is not — and over the wire it is now
+     marked as not measured until a script fills a million keys to disk and asks for
+     them.</p>
+
+  <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
+
+  <p>A tie with Redis on one node is not a reason to use anything. The reasons are
+     architectural, and each one is a consequence of storing no values rather than of
+     the code being clever. Only Redis has been measured against here; the comparisons
+     to other systems are about what their designs make them do, not benchmarks.</p>
+
+  <ul>
+    <li><strong>A set larger than RAM, answered exactly.</strong> Open-source Redis keeps
+       every member in memory at 30 bytes each. The on-disk engine keeps 3: a billion
+       keys is roughly 3 GB of RAM against 30. Until 0.8.0 the price of that was an
+       11.8 µs read for any key that was present; it is 3.6 µs now, and an absent key — the
+       usual answer to "have I seen this?" — never leaves memory at all, in 200 ns.</li>
+    <li><strong>Exact where a filter guesses.</strong> A Bloom filter, including RedisBloom,
+       answers "probably" and cannot forget a key. This answers yes or no, deletes, and
+       expires keys on their own. It costs 3.0 bytes per key against the filter's 1.2 —
+       2.5 times the memory to stop being wrong, and to be able to delete.</li>
+    <li><strong>An acknowledged write survives losing a node.</strong> Redis replicates
+       asynchronously, and its own cluster documentation says a failover can lose writes
+       that were already acknowledged. Here <code>w=2</code> of three means a write is on
+       two machines before the client hears "ok", and anti-entropy repairs the replica
+       that acknowledged and then crashed.</li>
+    <li><strong>No failover window.</strong> There is no primary to fail over from. Any node
+       coordinates any key, a dead node costs capacity rather than availability, and nothing
+       waits out a timeout to elect a replacement.</li>
+    <li><strong>Conflicts that cannot happen.</strong> With values gone, two replicas can only
+       disagree about whether a key exists, and the merge is a comparison of two integers.
+       There are no siblings to resolve as in Riak, no conditional writes to compose as in
+       DynamoDB, no per-cell timestamps to reason about as in Cassandra — and repair is one
+       32 KB message instead of a Merkle tree walk.</li>
+  </ul>
+
+  <p>The pattern is the one the whole project keeps finding: the cost of generality is
+     paid in places a key-only store simply does not have. The read path being fast was
+     the missing piece — "it fits on disk" used to mean "it is three times slower when
+     the answer is yes", and that is no longer the trade.</p>
 
   <p>So, plainly, when not to use this:</p>
 
   <ul>
-    <li><strong>One node.</strong> Redis is simpler, has a decade in production and an ecosystem, is 15% faster on this test, and uses four times less memory than the in-memory engine. Take it.</li>
+    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, ties on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
     <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0 — less of a gap than it used to be, but still a real one.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
     <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>

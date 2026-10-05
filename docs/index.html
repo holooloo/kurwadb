@@ -675,8 +675,8 @@
       </div>
       <h2 style="margin-top:34px">Against Redis, on the same machine</h2>
       <p>Not our numbers against someone's published ones — Redis 8.0.3 built here, both
-         servers run one at a time, same client, same concurrency, same question.
-         <code>bench/versus.sh</code> reproduces it.</p>
+         servers run one at a time, same client, same concurrency, same question, three runs
+         each on 5 October 2026. <code>bench/versus.sh</code> reproduces it.</p>
 
       <div class="scroll">
         <table>
@@ -684,18 +684,24 @@
             <tr><th scope="col">1M keys, 13 bytes each</th><th scope="col">RAM per key</th><th scope="col">Membership/sec</th></tr>
           </thead>
           <tbody>
-            <tr><td>Redis <code>SET</code> / <code>SISMEMBER</code>, RESP</td><td class="num">30.2 B</td><td class="num">142 600</td></tr>
-            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">115–123k</td></tr>
-            <tr><td>kurwadb on-disk, HTTP + JSON</td><td class="num">3.0 B</td><td class="num">115–123k</td></tr>
-            <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">59 000</td></tr>
+            <tr><td>Redis <code>SET</code> / <code>SISMEMBER</code>, RESP</td><td class="num">30.2 B</td><td class="num">102 400</td></tr>
+            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">103 300</td></tr>
+            <tr><td>kurwadb on-disk, in-process</td><td class="num">3.0 B</td><td class="num">3.6 µs hit · 0.2 µs miss</td></tr>
+            <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">48 000</td></tr>
           </tbody>
         </table>
       </div>
       <p>Redis is <b>4× more memory-efficient</b> than our in-memory engine — part of that
          is the Lamport stamp, origin, tombstone flag and expiry we store and it does not,
          the rest is BEAM overhead. The on-disk engine is <b>10× better than Redis</b>,
-         because what it keeps in RAM is a Bloom filter rather than the keys. Throughput
-         lands within 15% despite HTTP and JSON against a binary protocol.</p>
+         because what it keeps in RAM is a Bloom filter rather than the keys. Throughput is
+         a tie — HTTP and JSON against a binary protocol, within 2% on every run. The
+         on-disk engine has not been measured over the wire yet; an earlier version of this
+         table showed the in-memory figure for it, which was wrong.</p>
+      <p>So the case for it is not speed on one node. It is a set that outgrows RAM and is
+         still answered exactly, writes acknowledged by two machines instead of one, and no
+         primary to fail over from —
+         <a href="article.html#where-this-should-beat-what-people-use-today">the long version</a>.</p>
 
       <p>Apple M4, 10 cores; all three nodes share that one CPU, <code>n=3 r=2 w=2</code>.
          128 bytes for a 13-byte key, 152 for a 36-byte one — <em>jaki gruby</em>, and
@@ -747,7 +753,7 @@ member kurwa3@10.0.0.3 down</span>
     <div class="col">
       <h2>When not to take this</h2>
       <ul class="limits">
-        <li><b>One node.</b> Redis is simpler, has a decade in production and an ecosystem, is 15% faster on this test, and uses four times less memory than the in-memory engine. Take it.</li>
+        <li><b>One node, and the set fits in RAM.</b> Redis is simpler, has a decade in production and an ecosystem, ties on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
         <li><b>False positives are acceptable and you never delete.</b> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0.</li>
         <li><b>You need scans, listings or queries.</b> There are none, by construction, and that will not change.</li>
         <li><b>You need the on-disk engine to be mature.</b> It exists and passes the same test suite, but it is younger than the in-memory one and compaction is crude.</li>
