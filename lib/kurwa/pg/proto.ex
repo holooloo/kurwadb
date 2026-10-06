@@ -85,7 +85,9 @@ defmodule Kurwa.Pg.Proto do
   defp message(?X, _body), do: :terminate
   defp message(?S, _body), do: :sync
   defp message(?H, _body), do: :flush
-  defp message(?p, body), do: {:password, cstring!(body)}
+  # PasswordMessage, SASLInitialResponse and SASLResponse share the type byte;
+  # which one it is depends on what the server asked for, so the server parses it.
+  defp message(?p, body), do: {:password_message, body}
 
   defp message(?P, body) do
     {name, body} = cstring(body)
@@ -143,6 +145,32 @@ defmodule Kurwa.Pg.Proto do
 
   @doc "AuthenticationCleartextPassword."
   def auth_cleartext, do: frame(?R, <<3::32>>)
+
+  @doc "AuthenticationMD5Password, with its 4-byte salt."
+  def auth_md5(salt), do: frame(?R, <<5::32, salt::binary-size(4)>>)
+
+  @doc "AuthenticationSASL: the mechanisms on offer."
+  def auth_sasl(mechanisms), do: frame(?R, [<<10::32>>, Enum.map(mechanisms, &[&1, 0]), 0])
+
+  @doc "AuthenticationSASLContinue."
+  def auth_sasl_continue(data), do: frame(?R, [<<11::32>>, data])
+
+  @doc "AuthenticationSASLFinal."
+  def auth_sasl_final(data), do: frame(?R, [<<12::32>>, data])
+
+  @doc "The cleartext password in a PasswordMessage body."
+  def password(body), do: cstring!(body)
+
+  @doc "SASLInitialResponse: `{mechanism, initial_response}`."
+  def sasl_initial(body) do
+    {mechanism, rest} = cstring(body)
+
+    case rest do
+      <<-1::32-signed, _::binary>> -> {mechanism, ""}
+      <<len::32, data::binary-size(len), _::binary>> -> {mechanism, data}
+      _ -> {mechanism, ""}
+    end
+  end
 
   @doc "ParameterStatus."
   def parameter_status(name, value), do: frame(?S, [name, 0, value, 0])

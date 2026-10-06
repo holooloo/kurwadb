@@ -27,7 +27,7 @@ defmodule Kurwa.Pg.Server do
 
   use ThousandIsland.Handler
 
-  alias Kurwa.Pg.{Catalog, Proto, Types}
+  alias Kurwa.Pg.{Auth, Catalog, Proto, Types}
   alias Kurwa.Sql.{Exec, Parser}
 
   require Logger
@@ -67,8 +67,14 @@ defmodule Kurwa.Pg.Server do
   defp loop(buffer, socket, %{phase: :startup} = state) do
     case Proto.decode_startup(buffer) do
       {:ssl, rest} ->
-        send!(socket, "N")
-        loop(rest, socket, state)
+        case tls_options() do
+          nil ->
+            send!(socket, "N")
+            loop(rest, socket, state)
+
+          options ->
+            upgrade(socket, options, rest, state)
+        end
 
       {:gss, rest} ->
         send!(socket, "N")
@@ -93,8 +99,9 @@ defmodule Kurwa.Pg.Server do
             loop(rest, socket, %{state | phase: :ready})
 
           _token ->
-            send!(socket, Proto.auth_cleartext())
-            loop(rest, socket, %{state | phase: :password})
+            {challenge, phase} = challenge()
+            send!(socket, challenge)
+            loop(rest, socket, %{state | phase: phase})
         end
 
       {:startup, {major, minor}, _params, _rest} ->
@@ -110,24 +117,23 @@ defmodule Kurwa.Pg.Server do
     end
   end
 
-  defp loop(buffer, socket, %{phase: :password} = state) do
+  defp loop(buffer, socket, %{phase: phase} = state) when phase != :ready do
     case Proto.decode(buffer) do
-      {:ok, {:password, presented}, rest} ->
-        token = to_string(Kurwa.Config.auth_token())
+      {:ok, {:password_message, body}, rest} ->
+        case authenticate(phase, body, state) do
+          {:continue, reply, phase} ->
+            send!(socket, reply)
+            loop(rest, socket, %{state | phase: phase})
 
-        if Plug.Crypto.secure_compare(presented, token) do
-          finish_startup(socket, state)
-          loop(rest, socket, %{state | phase: :ready})
-        else
-          send!(
-            socket,
-            Proto.fatal(
-              "28P01",
-              "password authentication failed for user \"#{state.session.user}\""
-            )
-          )
+          {:ok, final} ->
+            send!(socket, final)
+            finish_startup(socket, state)
+            loop(rest, socket, %{state | phase: :ready})
 
-          {:close, state}
+          :error ->
+            message = "password authentication failed for user \"#{state.session.user}\""
+            send!(socket, Proto.fatal("28P01", message))
+            {:close, state}
         end
 
       {:ok, _other, _rest} ->
@@ -157,6 +163,129 @@ defmodule Kurwa.Pg.Server do
       {:error, reason} ->
         Logger.warning("kurwadb pg: dropping connection, undecodable message: #{inspect(reason)}")
         send!(socket, Proto.fatal("08P01", "invalid message"))
+        {:close, state}
+    end
+  end
+
+  # The method is pg_auth's: SCRAM-SHA-256 unless configured otherwise.
+  defp challenge do
+    case Kurwa.Config.get(:pg_auth) do
+      :md5 ->
+        salt = Auth.md5_salt()
+        {Proto.auth_md5(salt), {:md5, salt}}
+
+      :password ->
+        {Proto.auth_cleartext(), :password}
+
+      _scram ->
+        {Proto.auth_sasl(Auth.mechanisms(channel_binding())), :sasl_initial}
+    end
+  end
+
+  defp authenticate(:password, body, _state) do
+    if Plug.Crypto.secure_compare(Proto.password(body), token()), do: {:ok, []}, else: :error
+  end
+
+  defp authenticate({:md5, salt}, body, state) do
+    if Auth.md5_ok?(Proto.password(body), state.session.user, salt, token()),
+      do: {:ok, []},
+      else: :error
+  end
+
+  defp authenticate(:sasl_initial, body, _state) do
+    {mechanism, client_first} = Proto.sasl_initial(body)
+    binding = channel_binding()
+
+    with true <- mechanism in Auth.mechanisms(binding),
+         {:ok, server_first, exchange} <-
+           Auth.scram_first(mechanism, client_first, token(), binding) do
+      {:continue, Proto.auth_sasl_continue(server_first), {:sasl_final, exchange}}
+    else
+      _ -> :error
+    end
+  end
+
+  defp authenticate({:sasl_final, exchange}, body, _state) do
+    case Auth.scram_final(body, exchange) do
+      {:ok, server_final} -> {:ok, Proto.auth_sasl_final(server_final)}
+      {:error, _} -> :error
+    end
+  end
+
+  defp token, do: to_string(Kurwa.Config.auth_token())
+
+  # Set once the connection is TLS: the tls-server-end-point data of the
+  # certificate it was made with.
+  defp channel_binding, do: Process.get(:kurwa_pg_binding)
+
+  # --------------------------------------------------------------------- TLS
+
+  # TLS is on when pg_tls is configured: a keyword list of :ssl server options,
+  # usually certfile and keyfile (KURWA_PG_TLS_CERT, KURWA_PG_TLS_KEY).
+  defp tls_options do
+    case Kurwa.Config.get(:pg_tls) do
+      nil -> nil
+      [] -> nil
+      options -> options
+    end
+  end
+
+  # PostgreSQL negotiates TLS inside the plain connection: SSLRequest, an "S",
+  # then the handshake on the same socket. ThousandIsland keeps its socket for
+  # the life of the connection, so from here this process serves the
+  # connection itself, over :ssl, with the same protocol code.
+  defp upgrade(socket, options, _rest, state) do
+    raw = socket.socket
+    :ok = :gen_tcp.send(raw, "S")
+
+    case :ssl.handshake(raw, options, 10_000) do
+      {:ok, tls} ->
+        Process.put(:kurwa_pg_tls, tls)
+
+        case certificate(options) do
+          nil -> :ok
+          der -> Process.put(:kurwa_pg_binding, Auth.end_point(der))
+        end
+
+        tls_loop(tls, socket, %{state | buffer: <<>>})
+
+      {:error, reason} ->
+        Logger.warning("kurwadb pg: TLS handshake failed: #{inspect(reason)}")
+        {:close, state}
+    end
+  end
+
+  # The certificate this server presents - the first in the chain - from the
+  # options it was given, for channel binding.
+  defp certificate(options) do
+    cond do
+      der = Keyword.get(options, :cert) ->
+        if is_list(der), do: hd(der), else: der
+
+      path = Keyword.get(options, :certfile) ->
+        path |> File.read!() |> :public_key.pem_decode() |> hd() |> elem(1)
+
+      true ->
+        nil
+    end
+  end
+
+  defp tls_loop(tls, socket, state) do
+    case :ssl.recv(tls, 0) do
+      {:ok, data} ->
+        result = loop(state.buffer <> data, socket, state)
+        flush(socket)
+
+        case result do
+          {:continue, state} ->
+            tls_loop(tls, socket, state)
+
+          {:close, state} ->
+            :ssl.close(tls)
+            {:close, state}
+        end
+
+      {:error, _closed} ->
         {:close, state}
     end
   end
@@ -307,7 +436,7 @@ defmodule Kurwa.Pg.Server do
     %{state | portals: Map.delete(state.portals, name)}
   end
 
-  defp handle({:password, _}, socket, state),
+  defp handle({:password_message, _}, socket, state),
     do: fail(socket, state, "08P01", "unexpected password message")
 
   defp handle({:unsupported, type}, socket, state) do
@@ -518,8 +647,14 @@ defmodule Kurwa.Pg.Server do
 
   defp flush(socket) do
     case Process.delete(:kurwa_pg_out) do
-      nil -> :ok
-      out -> ThousandIsland.Socket.send(socket, out)
+      nil ->
+        :ok
+
+      out ->
+        case Process.get(:kurwa_pg_tls) do
+          nil -> ThousandIsland.Socket.send(socket, out)
+          tls -> :ssl.send(tls, out)
+        end
     end
   end
 end

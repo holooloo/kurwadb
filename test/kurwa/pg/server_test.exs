@@ -39,18 +39,27 @@ defmodule Kurwa.Pg.ServerTest do
       C.terminate(socket)
     end
 
-    test "with an auth token, the password is the token", %{port: port} do
-      original = Application.get_env(:kurwadb, :auth_token)
-      Application.put_env(:kurwadb, :auth_token, "s3cret")
-      on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+    for method <- [:scram, :md5, :password] do
+      test "with an auth token, the password is the token: #{method}", %{port: port} do
+        original =
+          {Application.get_env(:kurwadb, :auth_token), Application.get_env(:kurwadb, :pg_auth)}
 
-      {socket, startup} = C.connect(port, password: "s3cret")
-      assert List.last(startup) == {:ready, ?I}
-      C.terminate(socket)
+        Application.put_env(:kurwadb, :auth_token, "s3cret")
+        Application.put_env(:kurwadb, :pg_auth, unquote(method))
 
-      {socket, startup} = C.connect(port, password: "wrong")
-      assert [{"28P01", _}] = C.errors(startup)
-      :gen_tcp.close(socket)
+        on_exit(fn ->
+          Application.put_env(:kurwadb, :auth_token, elem(original, 0))
+          Application.put_env(:kurwadb, :pg_auth, elem(original, 1))
+        end)
+
+        {socket, startup} = C.connect(port, password: "s3cret")
+        assert List.last(startup) == {:ready, ?I}
+        C.terminate(socket)
+
+        {socket, startup} = C.connect(port, password: "wrong")
+        assert [{"28P01", _}] = C.errors(startup)
+        :gen_tcp.close(socket)
+      end
     end
   end
 

@@ -61,6 +61,11 @@ config :kurwadb,
   # PostgreSQL wire protocol: psql and drivers, off by default
   start_pg: false,
   pg_port: 5432,
+  # scram (SCRAM-SHA-256, PostgreSQL's default since 14), md5 or password.
+  # Only consulted when auth_token is set; without one, anyone may connect.
+  pg_auth: :scram,
+  # :ssl server options - certfile and keyfile at least - to accept TLS
+  pg_tls: nil,
 
   # Redis protocol: redis-cli and Redis clients, off by default
   start_resp: false,

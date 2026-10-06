@@ -151,8 +151,20 @@ would be a scan. Simple and extended protocol, text and binary formats, so
 prepared statements in psycopg, node-postgres and the like work; the scripts in
 `test/drivers/` check two of them. `BEGIN` and `COMMIT` are accepted because
 drivers send them unasked, but there are no transactions: every statement takes
-effect when it runs, and `ROLLBACK` says so. TLS is declined, and with
-`auth_token` set the password is the token, in cleartext. The reasons are in
+effect when it runs, and `ROLLBACK` says so.
+
+With `auth_token` set, the password is the token and the method is
+SCRAM-SHA-256, as in PostgreSQL 14 and later; `KURWA_PG_AUTH=md5` or `password`
+for old clients. Give it a certificate and it does TLS, and over TLS it offers
+SCRAM-SHA-256-PLUS, so `channel_binding=require` works:
+
+```sh
+KURWA_PG=1 KURWA_AUTH_TOKEN=s3cret \
+KURWA_PG_TLS_CERT=server.crt KURWA_PG_TLS_KEY=server.key iex -S mix
+PGPASSWORD=s3cret psql "host=127.0.0.1 port=5432 dbname=kurwadb sslmode=require channel_binding=require"
+```
+
+The reasons for each choice are in
 [ARCHITECTURE.md](ARCHITECTURE.md#the-postgresql-frontend).
 
 ## Redis protocol
@@ -205,6 +217,8 @@ variables are read at boot (`config/runtime.exs`).
 | `http_port` | `KURWA_HTTP_PORT` | 4040 | |
 | `start_9p` `ninep_port` | `KURWA_9P` `KURWA_9P_PORT` | `false`, 564 | |
 | `start_pg` `pg_port` | `KURWA_PG` `KURWA_PG_PORT` | `false`, 5432 | the PostgreSQL wire protocol |
+| `pg_auth` | `KURWA_PG_AUTH` | `:scram` | `:scram`, `:md5` or `:password`, when `auth_token` is set |
+| `pg_tls` | `KURWA_PG_TLS_CERT` `KURWA_PG_TLS_KEY` | none | `:ssl` server options; with them, SSLRequest is accepted |
 | `start_resp` `resp_port` | `KURWA_RESP` `KURWA_RESP_PORT` | `false`, 6379 | the Redis protocol |
 | `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, password for PostgreSQL and Redis `AUTH` |
 

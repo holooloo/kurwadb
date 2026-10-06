@@ -19,8 +19,65 @@ defmodule Kurwa.Pg.PsqlTest do
     {:ok, psql_bin: psql, dsn: "host=127.0.0.1 port=#{port} user=tester dbname=kurwadb"}
   end
 
-  defp psql(%{psql_bin: psql, dsn: dsn}, args) do
-    System.cmd(psql, [dsn, "-X", "-v", "ON_ERROR_STOP=0" | args], stderr_to_stdout: true)
+  defp psql(%{psql_bin: psql, dsn: dsn}, args, env \\ []) do
+    System.cmd(psql, [dsn, "-X", "-v", "ON_ERROR_STOP=0" | args],
+      stderr_to_stdout: true,
+      env: env
+    )
+  end
+
+  # SCRAM-SHA-256-PLUS over TLS, the way libpq does it by default when both
+  # sides can: the proof covers a hash of the certificate, so a wrong
+  # end-point hash would fail here.
+  test "SCRAM over TLS, with and without channel binding", %{psql_bin: psql} do
+    %{server_config: server} =
+      :public_key.pkix_test_data(%{
+        server_chain: %{
+          root: [key: {:rsa, 2048, 65537}, digest: :sha256],
+          peer: [key: {:rsa, 2048, 65537}, digest: :sha256]
+        },
+        client_chain: %{
+          root: [key: {:rsa, 2048, 65537}, digest: :sha256],
+          peer: [key: {:rsa, 2048, 65537}, digest: :sha256]
+        }
+      })
+      |> Map.new()
+
+    original =
+      {Application.get_env(:kurwadb, :auth_token), Application.get_env(:kurwadb, :pg_tls)}
+
+    Application.put_env(:kurwadb, :auth_token, "s3cret")
+    Application.put_env(:kurwadb, :pg_tls, Keyword.take(server, [:cert, :key, :cacerts]))
+
+    on_exit(fn ->
+      Application.put_env(:kurwadb, :auth_token, elem(original, 0))
+      Application.put_env(:kurwadb, :pg_tls, elem(original, 1))
+    end)
+
+    {:ok, tls_server} = ThousandIsland.start_link(port: 0, handler_module: Kurwa.Pg.Server)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(tls_server)
+    base = "host=127.0.0.1 port=#{port} user=tester dbname=kurwadb"
+
+    for {extra, label} <- [
+          {"sslmode=require channel_binding=require", "PLUS"},
+          {"sslmode=require channel_binding=disable", "SCRAM over TLS"},
+          {"sslmode=disable", "SCRAM in the clear"}
+        ] do
+      {out, code} =
+        psql(%{psql_bin: psql, dsn: "#{base} #{extra}"}, ["-tc", "SELECT 1"], [
+          {"PGPASSWORD", "s3cret"}
+        ])
+
+      assert {code, String.trim(out)} == {0, "1"}, "#{label}: #{out}"
+    end
+
+    {out, code} =
+      psql(%{psql_bin: psql, dsn: "#{base} sslmode=require"}, ["-tc", "SELECT 1"], [
+        {"PGPASSWORD", "nope"}
+      ])
+
+    assert code != 0
+    assert out =~ "password authentication failed"
   end
 
   test "queries, \\dt and \\d", context do

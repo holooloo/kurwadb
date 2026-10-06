@@ -25,11 +25,65 @@ defmodule Kurwa.PgClient do
         {socket, until_ready(socket)}
 
       password ->
-        [{:auth, 3}] = recv_messages(socket, 1)
-        send_message(socket, ?p, [password, 0])
+        user = Keyword.get(opts, :user, "test")
+
+        case recv_messages(socket, 1) do
+          [{:auth, 3}] ->
+            send_message(socket, ?p, [password, 0])
+
+          [{:auth, 5, salt}] ->
+            send_message(socket, ?p, ["md5", md5(md5(password <> user) <> salt), 0])
+
+          [{:auth, 10, mechanisms}] ->
+            scram(socket, password, mechanisms)
+        end
+
         {socket, until_ready(socket)}
     end
   end
+
+  # The client half of SCRAM-SHA-256, written from RFC 5802 rather than shared
+  # with the server, so the test checks one implementation against another.
+  defp scram(socket, password, mechanisms) do
+    true = "SCRAM-SHA-256" in String.split(mechanisms, <<0>>, trim: true)
+    nonce = Base.encode64(:crypto.strong_rand_bytes(18))
+    first_bare = "n=,r=" <> nonce
+    first = "n,," <> first_bare
+    send_message(socket, ?p, ["SCRAM-SHA-256", 0, <<byte_size(first)::32>>, first])
+
+    [{:auth, 11, server_first}] = recv_messages(socket, 1)
+    %{"r" => server_nonce, "s" => salt, "i" => i} = attrs(server_first)
+    true = String.starts_with?(server_nonce, nonce)
+
+    salted =
+      :crypto.pbkdf2_hmac(:sha256, password, Base.decode64!(salt), String.to_integer(i), 32)
+
+    client_key = :crypto.mac(:hmac, :sha256, salted, "Client Key")
+    stored_key = :crypto.hash(:sha256, client_key)
+    without_proof = "c=biws,r=" <> server_nonce
+    auth_message = Enum.join([first_bare, server_first, without_proof], ",")
+    proof = :crypto.exor(client_key, :crypto.mac(:hmac, :sha256, stored_key, auth_message))
+    send_message(socket, ?p, [without_proof, ",p=", Base.encode64(proof)])
+
+    case recv_messages(socket, 1) do
+      [{:auth, 12, "v=" <> signature}] ->
+        server_key = :crypto.mac(:hmac, :sha256, salted, "Server Key")
+        ^signature = Base.encode64(:crypto.mac(:hmac, :sha256, server_key, auth_message))
+        :ok
+
+      [other] ->
+        # a FATAL: leave it for until_ready to collect
+        send(self(), {:pg_client_pending, other})
+    end
+  end
+
+  defp attrs(message) do
+    message
+    |> String.split(",")
+    |> Map.new(fn <<k::binary-size(1), "=", v::binary>> -> {k, v} end)
+  end
+
+  defp md5(data), do: :crypto.hash(:md5, data) |> Base.encode16(case: :lower)
 
   def ssl_request(port) do
     {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 2_000)
@@ -108,7 +162,13 @@ defmodule Kurwa.PgClient do
 
   # Stops at ReadyForQuery, or when the server closes - which it does after a FATAL.
   def until_ready(socket, acc \\ []) do
-    [message] = recv_messages(socket, 1)
+    [message] =
+      receive do
+        {:pg_client_pending, message} -> [message]
+      after
+        0 -> recv_messages(socket, 1)
+      end
+
     acc = [message | acc]
 
     if match?({:ready, _}, message) or message == :closed,
@@ -129,7 +189,8 @@ defmodule Kurwa.PgClient do
     end
   end
 
-  defp decode(?R, <<code::32, _::binary>>), do: {:auth, code}
+  defp decode(?R, <<code::32>>), do: {:auth, code}
+  defp decode(?R, <<code::32, data::binary>>), do: {:auth, code, data}
 
   defp decode(?S, body),
     do:

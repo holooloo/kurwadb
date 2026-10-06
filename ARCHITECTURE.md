@@ -464,11 +464,23 @@ The mismatches, and what was chosen for each:
   `count(*)` of a whole set are refused with `0A000` and the reason. So are
   `UPDATE` (a key has nothing to update) and `DROP TABLE` (it would have to find
   the keys to delete them).
-* **TLS and auth.** SSLRequest is answered `N`, which libpq's default
-  `sslmode=prefer` accepts. With `auth_token` set, the password is the token,
-  sent in cleartext - the same exposure as the HTTP bearer token, and the same
-  advice: a trusted network, or a TLS-terminating proxy. SCRAM is the proper
-  answer and is not built.
+* **Auth.** With `auth_token` set, the password is the token, for any user
+  name - kurwadb has one secret, not roles. The method is SCRAM-SHA-256, which
+  PostgreSQL has defaulted to since 14 (`Kurwa.Pg.Auth`): the server keeps a
+  verifier derived once from the token, not the token, and the client proves it
+  knows the password without sending it. md5 and cleartext remain for clients
+  that predate SCRAM.
+* **TLS.** With `pg_tls` set, SSLRequest is answered `S` and the connection
+  upgrades in place. ThousandIsland owns the socket it accepted for the life of
+  the connection, so after the handshake this process serves the connection
+  itself, over `:ssl`, with the same protocol code. Over TLS, SCRAM-SHA-256-PLUS
+  is offered first, binding the proof to a hash of the certificate
+  (`tls-server-end-point`), which is what libpq chooses on its own and what
+  `channel_binding=require` demands. Without `pg_tls`, SSLRequest is answered
+  `N` and `sslmode=prefer` carries on in the clear. PostgreSQL 17's direct TLS
+  (`sslnegotiation=direct`, a TLS ClientHello with no SSLRequest first) is not
+  supported: by the time the handler sees the hello, the bytes are read, and
+  the handshake would need them back.
 
 One measured detail. The server collects its replies and writes them once the
 input it has been handed is handled, instead of a write per message - a

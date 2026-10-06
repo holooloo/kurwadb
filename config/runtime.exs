@@ -27,6 +27,17 @@ if config_env() != :test do
     ninep_port: int.("KURWA_9P_PORT", 564),
     start_pg: System.get_env("KURWA_PG") in ~w(1 true),
     pg_port: int.("KURWA_PG_PORT", 5432),
+    pg_auth:
+      (case System.get_env("KURWA_PG_AUTH") do
+         "md5" -> :md5
+         "password" -> :password
+         _ -> :scram
+       end),
+    pg_tls:
+      (case {System.get_env("KURWA_PG_TLS_CERT"), System.get_env("KURWA_PG_TLS_KEY")} do
+         {cert, key} when is_binary(cert) and is_binary(key) -> [certfile: cert, keyfile: key]
+         _ -> nil
+       end),
     start_resp: System.get_env("KURWA_RESP") in ~w(1 true),
     resp_port: int.("KURWA_RESP_PORT", 6379),
     cache: System.get_env("KURWA_CACHE") in ~w(1 true),
