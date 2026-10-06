@@ -46,6 +46,8 @@ defmodule Kurwa.Config do
     pg_tls: nil,
     start_resp: false,
     start_mysql: false,
+    start_mongo: false,
+    mongo_port: 27017,
     mysql_port: 3306,
     resp_port: 6379,
     auth_token: nil

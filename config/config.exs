@@ -73,7 +73,11 @@ config :kurwadb,
 
   # MySQL protocol: mysql, mariadb and the MySQL connectors, off by default
   start_mysql: false,
-  mysql_port: 3306
+  mysql_port: 3306,
+
+  # MongoDB protocol: mongosh and the MongoDB drivers, off by default
+  start_mongo: false,
+  mongo_port: 27017
 
 config :logger, level: :info
 

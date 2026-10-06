@@ -5,6 +5,9 @@
 #   scripts/cluster.sh          3 nodes on 4040, 4041, 4042
 #   scripts/cluster.sh 5        5 nodes
 #
+# KURWA_MONGO_BASE_PORT=27101 also opens the MongoDB protocol on 27101, 27102,
+# ... - give a driver all of them and it treats each node as a mongos router.
+#
 # Every node keeps its own WAL under data/cluster/<node>/ (Kurwa.Store scopes the
 # data directory by node name), so one data dir for the whole cluster is fine.
 set -euo pipefail
@@ -38,7 +41,11 @@ trap cleanup INT TERM EXIT
 for i in $(seq 1 "$NODES"); do
   port=$((BASE_PORT + i - 1))
   echo "starting kurwa${i}@${HOST} on http port ${port}"
-  KURWA_HTTP_PORT=$port elixir --name "kurwa${i}@${HOST}" --cookie "$COOKIE" \
+  mongo=()
+  if [ -n "${KURWA_MONGO_BASE_PORT:-}" ]; then
+    mongo=(KURWA_MONGO=1 KURWA_MONGO_PORT=$((KURWA_MONGO_BASE_PORT + i - 1)))
+  fi
+  env "${mongo[@]}" KURWA_HTTP_PORT=$port elixir --name "kurwa${i}@${HOST}" --cookie "$COOKIE" \
     -S mix run --no-halt &
   pids+=($!)
 done

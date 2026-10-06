@@ -7,11 +7,11 @@ deliberately still missing.
 ## Shape
 
 ```
-  clients         HTTP     9P2000    PostgreSQL     MySQL        Redis
-                    |        |           |            |            |
-  frontends   Gateway    NineP      Kurwa.Pg     Kurwa.Mysql   Kurwa.Resp    thin adapters
-                    \        |            \          /            /
-                     \       |             Kurwa.Sql            /
+  clients       HTTP    9P2000   PostgreSQL    MySQL     Redis     MongoDB
+                  |       |          |           |         |          |
+  frontends   Gateway   NineP    Kurwa.Pg   Kurwa.Mysql Kurwa.Resp Kurwa.Mongo   thin adapters
+                  \       |           \         /         /          /
+                   \      |            Kurwa.Sql         /          /
   api                  Kurwa / Kurwa.Namespace          keys and named sets
                                  |
   read path          Kurwa.Extractor                    cache + single-flight
@@ -27,8 +27,8 @@ deliberately still missing.
 
 Nothing above `Coordinator` knows about replication, and nothing below it knows
 about protocols. That is what makes a new frontend cheap - 9P was added without
-touching the core, and so were PostgreSQL, Redis and MySQL - and what let a disk
-engine be swapped in without touching the cluster.
+touching the core, and so were PostgreSQL, Redis, MySQL and MongoDB - and what
+let a disk engine be swapped in without touching the cluster.
 
 ## The data model
 
@@ -525,6 +525,42 @@ What is MySQL's own:
   failure - a scan is 1235 (`ER_NOT_SUPPORTED_YET`), a syntax error 1064 - and
   the ROLLBACK warning appears in `SHOW WARNINGS`.
 
+## The MongoDB frontend
+
+`Kurwa.Mongo` speaks OP_MSG - and OP_QUERY, which drivers still use for the
+first `hello` of a connection - with its own BSON codec, and maps commands
+straight onto `Kurwa` and `Kurwa.Namespace`; there is no SQL in between. A
+collection is a set and a document is `{_id: key}`. In the database `kurwadb`
+a collection is the set of its name, the same one SQL and Redis see; in any
+other database it is the set `db.collection`.
+
+* **`_id`.** A string `_id` is the key itself. Anything else - an ObjectId, a
+  number, a document - is keyed by its BSON bytes behind a NUL byte, which no
+  string key starts with. Such a key is never decoded back into a value,
+  because nothing returns keys it was not asked about: a `find` answers with
+  the `_id`s the client sent.
+* **What can be asked.** `find`, `count`, `delete` and `countDocuments`' `$match`
+  stage take `{_id: v}`, `$eq` or `$in`. An empty filter, or one on any other
+  field, is a scan and refused. `insert` goes through `add_new`, so a second
+  insert of an `_id` is the duplicate-key error MongoDB itself gives - the
+  single winner that needed adding for SQL and Redis is MongoDB's ordinary
+  semantics. `update` accepts only the shape that sets nothing:
+  `{$setOnInsert: {}}` with `upsert`, which is how MongoDB code says "add if
+  new". A document with a field other than `_id` is refused rather than
+  half-stored; `expireAt`, a date, becomes the key's TTL.
+* **Topology.** A node answers `hello` as a `mongos` does (`msg: "isdbgrid"`),
+  never as a replica set member. Drivers then treat every node they are given
+  as a router - any of them takes any request, and a driver fails over between
+  them - which is what a leaderless store is. Measured: PyMongo against three
+  nodes reports a Sharded topology of three Mongos; with one node killed,
+  writes carried on without an error.
+* **Auth.** SCRAM-SHA-256 over `saslStart` / `saslContinue`, the same exchange
+  as PostgreSQL's (`Kurwa.Pg.Auth`), with or without `skipEmptyExchange`.
+  `saslSupportedMechs` in `hello` says so.
+* **Transactions.** `commitTransaction` succeeds, since the writes already did.
+  `abortTransaction` fails with a message that nothing was rolled back:
+  MongoDB has no warnings, and silence would claim a rollback.
+
 ## The Redis frontend
 
 `Kurwa.Resp` speaks RESP2 and RESP3. The mapping takes the two Redis types that
@@ -613,9 +649,8 @@ the "key = hash(value)" model - and its arena plus separate index is a different
 blueprint for immutable on-disk sets than the LSM one, worth having if content
 addressing ever becomes the point.
 
-**More wire protocols.** MongoDB maps cleanly (a collection is a set, a document is `{_id: key}`) but its
-drivers open with `hello`, SCRAM, sessions and cursor management, so it waits
-for someone who needs it.
+**TLS on the MySQL, Redis and MongoDB ports.** PostgreSQL has it; the others
+accept clients whose default does not insist on it, which is most of them.
 
 **Faster pipelines.** Pipelined, Redis answers 2.2 times as many lookups. The
 sixteen reads of a pipeline run one after another through the full read path;

@@ -27,6 +27,7 @@ MIX_ENV=test mix run --no-start bench/quorum_parts.exs  # a quorum read, timed i
 bench/client_ceiling.sh                            # is the load generator the ceiling?
 bench/pg.sh                                        # the PostgreSQL frontend under pgbench
 bench/mysql.sh                                     # the MySQL frontend under mysqlslap
+bench/mongo.sh                                     # the MongoDB frontend under the Node.js driver
 REDIS_DIR=... bench/versus.sh                      # against Redis: HTTP, and RESP with RESP
 ```
 
@@ -189,6 +190,31 @@ two runs, 0.13.0:
 The same as the other three protocols, within their noise: HTTP 124-132k,
 RESP 125-129k, PostgreSQL 136-147k. Which is the result of the RESP section
 again from another side - none of these wire formats is what a request costs.
+
+## The MongoDB frontend
+
+`bench/mongo.sh`: one node, 100 000 keys, `findOne({_id})` through the
+official Node.js driver, 64 operations in flight, 0.14.0:
+
+| Node processes × in flight | key present | key absent |
+|---|---|---|
+| 2 × 32 | 57 000 ops/sec | 60 700 ops/sec |
+| 4 × 16 | 75 500 – 79 500 ops/sec | 70 200 – 76 500 ops/sec |
+| 8 × 8 | 77 800 ops/sec | 76 600 ops/sec |
+
+Lower than the other protocols, and the table says whose ceiling it is: more
+client processes stop helping at about 77 000, on a machine the clients share
+with the server. The server side, measured in-process with no client
+(`bench/mongo_server_cost.exs`):
+
+| per `findOne` | |
+|---|---|
+| decode the OP_MSG, run `find`, encode the reply | 5.7 µs |
+| of which the lookup, `Kurwa.fetch` | 0.87 µs |
+
+So the frontend's own cost is BSON and command handling, about 5 µs a request -
+the most of any frontend, and still a small fraction of what the driver spends
+on its side of each request.
 
 ## SET NX: one winner, two round trips
 

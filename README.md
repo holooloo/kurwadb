@@ -33,11 +33,12 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 331 tests, ~3s
+mix test                          # 346 tests, ~3s
 mix test --include cluster        # 19 more, ~14s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 mix test --include psql           # the real psql against the PostgreSQL frontend
 mix test --include mysql          # the real mysql client against the MySQL frontend
+mix test --include mongo          # the real mongosh against the MongoDB frontend
 ```
 
 The cluster tests boot actual distributed nodes and assert the guarantees this
@@ -226,6 +227,33 @@ default `ssl-mode=PREFERRED` accepts. Columns are named as MySQL names them, so
 dictionary cursors find `DATABASE()` under that name. `test/drivers/` has
 PyMySQL, Connector/Python and mysql2 checks.
 
+## MongoDB protocol
+
+`mongosh` and the MongoDB drivers connect as they would to a `mongos`. A
+collection is a set and a document is `{_id: key}`; in the database `kurwadb` a
+collection is the set of the same name, so `seen` is the table SQL sees:
+
+```sh
+KURWA_MONGO=1 KURWA_MONGO_PORT=27018 iex -S mix
+mongosh mongodb://127.0.0.1:27018/kurwadb
+```
+
+```js
+db.seen.insertMany([{_id: "order:1"}, {_id: "order:2"}])
+db.seen.insertOne({_id: "order:1"})                    // E11000 duplicate key, one winner
+db.seen.find({_id: {$in: ["order:1", "order:3"]}})     // [{_id: "order:1"}]
+db.seen.updateOne({_id: "job:9"}, {$setOnInsert: {}}, {upsert: true})
+db.seen.insertOne({_id: "s", expireAt: new Date(Date.now() + 3600e3)})  // a TTL
+db.seen.find({})                                       // error: it would be a scan
+```
+
+Filters are on `_id` only, and a document has no fields but `_id` (and
+`expireAt`, which becomes the key's TTL). Every node answers `hello` as a
+`mongos`, so a driver given several nodes - `mongodb://n1,n2,n3/` - treats them
+as routers and fails over between them. SCRAM-SHA-256 with `auth_token` as the
+password, for any user. `abortTransaction` is an error that says nothing was
+rolled back. `test/drivers/` has PyMongo and Node.js driver checks.
+
 ## Configuration
 
 Every setting has a default, so the app boots with no config at all. Environment
@@ -252,7 +280,8 @@ variables are read at boot (`config/runtime.exs`).
 | `pg_tls` | `KURWA_PG_TLS_CERT` `KURWA_PG_TLS_KEY` | none | `:ssl` server options; with them, SSLRequest is accepted |
 | `start_resp` `resp_port` | `KURWA_RESP` `KURWA_RESP_PORT` | `false`, 6379 | the Redis protocol |
 | `start_mysql` `mysql_port` | `KURWA_MYSQL` `KURWA_MYSQL_PORT` | `false`, 3306 | the MySQL protocol |
-| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, the password for PostgreSQL, MySQL and Redis `AUTH` |
+| `start_mongo` `mongo_port` | `KURWA_MONGO` `KURWA_MONGO_PORT` | `false`, 27017 | the MongoDB protocol |
+| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, the password for PostgreSQL, MySQL, MongoDB and Redis `AUTH` |
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
 allowed and logged as a warning, because it is a real durability decision.
@@ -289,6 +318,7 @@ Kurwa.Pg              the PostgreSQL wire protocol, and enough pg_catalog for ps
 Kurwa.Sql             the SQL a set understands, shared by any SQL frontend
 Kurwa.Resp            the Redis protocol, RESP2 and RESP3
 Kurwa.Mysql           the MySQL protocol, text and binary result sets
+Kurwa.Mongo           the MongoDB protocol: OP_MSG, BSON, answering as a mongos
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure

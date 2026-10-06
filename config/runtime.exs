@@ -42,6 +42,8 @@ if config_env() != :test do
     resp_port: int.("KURWA_RESP_PORT", 6379),
     start_mysql: System.get_env("KURWA_MYSQL") in ~w(1 true),
     mysql_port: int.("KURWA_MYSQL_PORT", 3306),
+    start_mongo: System.get_env("KURWA_MONGO") in ~w(1 true),
+    mongo_port: int.("KURWA_MONGO_PORT", 27017),
     cache: System.get_env("KURWA_CACHE") in ~w(1 true),
     wal_sync_on_write: System.get_env("KURWA_WAL_SYNC_ON_WRITE") in ~w(1 true),
     engine:
