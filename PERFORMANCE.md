@@ -26,6 +26,7 @@ bench/lsm_http.sh                                  # both engines over HTTP, 1M 
 MIX_ENV=test mix run --no-start bench/quorum_parts.exs  # a quorum read, timed in parts
 bench/client_ceiling.sh                            # is the load generator the ceiling?
 bench/pg.sh                                        # the PostgreSQL frontend under pgbench
+bench/mysql.sh                                     # the MySQL frontend under mysqlslap
 REDIS_DIR=... bench/versus.sh                      # against Redis: HTTP, and RESP with RESP
 ```
 
@@ -173,6 +174,21 @@ An earlier version of this section noted that these were within a few percent
 of Redis over RESP and suggested the gap Redis held over HTTP was HTTP and
 JSON. The RESP frontend measured that properly, one client against both
 servers, and the suggestion was wrong: see the next section.
+
+## The MySQL frontend
+
+`bench/mysql.sh`: one node, 100 000 keys, 64 clients in mysqlslap's threads,
+640 000 `SELECT \`key\` FROM kurwa WHERE \`key\` = ...` per run, text protocol,
+two runs, 0.13.0:
+
+| | queries/sec |
+|---|---|
+| key present | 128 400 – 133 200 |
+| key absent | 127 000 – 130 500 |
+
+The same as the other three protocols, within their noise: HTTP 124-132k,
+RESP 125-129k, PostgreSQL 136-147k. Which is the result of the RESP section
+again from another side - none of these wire formats is what a request costs.
 
 ## SET NX: one winner, two round trips
 

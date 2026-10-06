@@ -7,10 +7,11 @@ deliberately still missing.
 ## Shape
 
 ```
-  clients            HTTP       9P2000     PostgreSQL            Redis
-                       |           |            |                  |
-  frontends     Kurwa.Gateway Kurwa.NineP  Kurwa.Pg + Kurwa.Sql  Kurwa.Resp   thin adapters
-                           \          |          |               /
+  clients         HTTP     9P2000    PostgreSQL     MySQL        Redis
+                    |        |           |            |            |
+  frontends   Gateway    NineP      Kurwa.Pg     Kurwa.Mysql   Kurwa.Resp    thin adapters
+                    \        |            \          /            /
+                     \       |             Kurwa.Sql            /
   api                  Kurwa / Kurwa.Namespace          keys and named sets
                                  |
   read path          Kurwa.Extractor                    cache + single-flight
@@ -26,8 +27,8 @@ deliberately still missing.
 
 Nothing above `Coordinator` knows about replication, and nothing below it knows
 about protocols. That is what makes a new frontend cheap - 9P was added without
-touching the core, and so was PostgreSQL - and what let a disk engine be swapped
-in without touching the cluster.
+touching the core, and so were PostgreSQL, Redis and MySQL - and what let a disk
+engine be swapped in without touching the cluster.
 
 ## The data model
 
@@ -488,6 +489,42 @@ prepared statement's Bind, Execute and Sync then cost one syscall rather than
 three. Under pgbench that was the difference between 70 000 and 136 000
 transactions a second.
 
+## The MySQL frontend
+
+`Kurwa.Mysql` speaks the MySQL 8 client/server protocol over the same
+`Kurwa.Sql` the PostgreSQL frontend uses - which is why the SQL layer was
+dialect-neutral from the start. The `:mysql` dialect differs in the lexer only:
+backticks quote identifiers, `"x"` is a string, `?` numbers parameters in
+order, `#` starts a comment. The parser learned the MySQL spellings of things
+it already did: `INSERT IGNORE` is `ON CONFLICT DO NOTHING` and goes through
+`add_new`; `REPLACE` is an insert, since a key has nothing to replace;
+`ON DUPLICATE KEY UPDATE` is refused for the same reason `DO UPDATE` is.
+
+What is MySQL's own:
+
+* **The conversation.** The v10 handshake, `COM_QUERY` with text result sets
+  and multiple statements, `COM_STMT_PREPARE` / `EXECUTE` with binary ones,
+  `CLIENT_DEPRECATE_EOF` when the client asks. Types map to `VARCHAR`,
+  `TINYINT(1)` for answers - MySQL's boolean - and `BIGINT`.
+* **What clients ask unprompted.** The mysql client opens with
+  `SELECT @@version_comment LIMIT 1`; connectors read `@@` system variables,
+  send `SET NAMES`, `SET autocommit`, `SHOW VARIABLES LIKE`, `SHOW WARNINGS`.
+  These are answered from a fixed table, and `SHOW TABLES` / `DESCRIBE` from
+  the set registry.
+* **Column names.** MySQL names an unaliased column by the text that produced
+  it - `SELECT DATABASE()` has a column called `DATABASE()` - and dictionary
+  cursors key rows by that. So the MySQL frontend splits a query into
+  statements on the raw text, keeps each statement's source, and names columns
+  from it.
+* **Auth.** `caching_sha2_password` by default, `mysql_native_password` when
+  a client insists (it is asked again with AuthSwitchRequest, as MySQL does).
+  caching_sha2's fast path needs the server to compute the expected scramble,
+  which it always can, so the full exchange that wants TLS or RSA never runs.
+  TLS itself is not offered on this port.
+* **Errors** carry the MySQL code and SQLSTATE a client expects for the same
+  failure - a scan is 1235 (`ER_NOT_SUPPORTED_YET`), a syntax error 1064 - and
+  the ROLLBACK warning appears in `SHOW WARNINGS`.
+
 ## The Redis frontend
 
 `Kurwa.Resp` speaks RESP2 and RESP3. The mapping takes the two Redis types that
@@ -576,12 +613,7 @@ the "key = hash(value)" model - and its arena plus separate index is a different
 blueprint for immutable on-disk sets than the LSM one, worth having if content
 addressing ever becomes the point.
 
-**More wire protocols.** The SQL layer (`Kurwa.Sql.*`) is dialect-neutral on
-purpose - the lexer already knows MySQL's backticks and `?` parameters - so a
-MySQL frontend is a codec (handshake, `COM_QUERY`, `COM_STMT_PREPARE` /
-`COM_STMT_EXECUTE`) over the same parser and executor, not a second SQL engine.
-Its cost is auth: `caching_sha2_password` wants TLS or an RSA exchange. MongoDB
-maps cleanly (a collection is a set, a document is `{_id: key}`) but its
+**More wire protocols.** MongoDB maps cleanly (a collection is a set, a document is `{_id: key}`) but its
 drivers open with `hello`, SCRAM, sessions and cursor management, so it waits
 for someone who needs it.
 

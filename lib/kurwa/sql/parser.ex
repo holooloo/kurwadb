@@ -94,6 +94,28 @@ defmodule Kurwa.Sql.Parser do
   end
 
   defp statement([{:ident, "insert"}, {:ident, "into"} | rest]), do: insert(rest)
+
+  # MySQL: INSERT IGNORE is ON CONFLICT DO NOTHING, and REPLACE is an insert,
+  # since there is nothing on a key to replace.
+  defp statement([{:ident, "insert"}, {:ident, "ignore"} | rest]) do
+    with {:ok, {:insert, table, columns, rows, returning, _}} <-
+           statement([{:ident, "insert"} | rest]),
+         do: {:ok, {:insert, table, columns, rows, returning, :nothing}}
+  end
+
+  defp statement([{:ident, "replace"}, {:ident, "into"} | rest]), do: insert(rest)
+
+  defp statement([{:ident, "use"}, {_, database}]), do: {:ok, {:use, database}}
+
+  defp statement([{:ident, d}, {_, _} = table]) when d in ~w(describe desc) do
+    with {:ok, set, []} <- table([table]), do: {:ok, {:describe_table, set}}
+  end
+
+  defp statement([{:ident, d}, {_, _} = schema, {:op, "."}, {_, _} = table])
+       when d in ~w(describe desc) do
+    with {:ok, set, []} <- table([schema, {:op, "."}, table]), do: {:ok, {:describe_table, set}}
+  end
+
   defp statement([{:ident, "delete"}, {:ident, "from"} | rest]), do: delete(rest)
 
   defp statement([{:ident, "create"}, {:ident, "table"} | rest]) do
@@ -183,6 +205,8 @@ defmodule Kurwa.Sql.Parser do
   defp column_name({:call, name, _}), do: name
   defp column_name(:count_star), do: "count"
   defp column_name({:exists, _}), do: "exists"
+  defp column_name({:sysvar, name}), do: "@@" <> name
+  defp column_name({:uservar, name}), do: "@" <> name
   defp column_name({:cast, expr, _type}), do: column_name(expr)
   defp column_name(_), do: "?column?"
 
@@ -191,6 +215,10 @@ defmodule Kurwa.Sql.Parser do
   end
 
   defp from(rest), do: {:ok, nil, rest}
+
+  # `key` is a reserved word in MySQL, so there it is written `key`.
+  defp where([{:ident, "where"}, {:qident, "key"} | rest]),
+    do: where([{:ident, "where"}, {:ident, "key"} | rest])
 
   defp where([{:ident, "where"} | rest]) do
     case rest do
@@ -274,6 +302,9 @@ defmodule Kurwa.Sql.Parser do
 
   defp rows(_, _), do: error("42601", "expected a row of values")
 
+  defp conflict_and_returning([{:ident, "on"}, {:ident, "duplicate"} | _]),
+    do: error("0A000", "ON DUPLICATE KEY UPDATE: a key has nothing to update; use INSERT IGNORE")
+
   # ON CONFLICT [(key)] DO NOTHING makes the insert conditional, so its count
   # says which rows were new - the SQL spelling of SET NX. DO UPDATE has nothing
   # to update on a key.
@@ -349,6 +380,17 @@ defmodule Kurwa.Sql.Parser do
   defp primary([{:op, "-"}, {:number, n} | rest]), do: {:ok, {:lit, -n}, rest}
   defp primary([{:param, n} | rest]), do: {:ok, {:param, n}, rest}
   defp primary([{:ident, "null"} | rest]), do: {:ok, {:lit, nil}, rest}
+
+  # MySQL system variables, @@name or @@session.name / @@global.name, and user
+  # variables, @name, which are never set here and so are NULL.
+  defp primary([{:op, "@"}, {:op, "@"}, {:ident, scope}, {:op, "."}, {_, name} | rest])
+       when scope in ~w(session global local),
+       do: {:ok, {:sysvar, String.downcase(name)}, rest}
+
+  defp primary([{:op, "@"}, {:op, "@"}, {_, name} | rest]),
+    do: {:ok, {:sysvar, String.downcase(name)}, rest}
+
+  defp primary([{:op, "@"}, {_, name} | rest]), do: {:ok, {:uservar, name}, rest}
   defp primary([{:ident, "true"} | rest]), do: {:ok, {:lit, true}, rest}
   defp primary([{:ident, "false"} | rest]), do: {:ok, {:lit, false}, rest}
 

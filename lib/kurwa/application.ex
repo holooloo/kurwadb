@@ -24,7 +24,7 @@ defmodule Kurwa.Application do
         Kurwa.Repair,
         Kurwa.Extractor.Cache,
         Kurwa.Extractor.Flight
-      ] ++ gateway() ++ ninep() ++ pg() ++ resp()
+      ] ++ gateway() ++ ninep() ++ pg() ++ resp() ++ mysql()
 
     Logger.info(
       "kurwadb: starting on #{node()} (n=#{Config.n()} r=#{Config.r()} w=#{Config.w()} " <>
@@ -45,6 +45,21 @@ defmodule Kurwa.Application do
 
   # Off by default: the registered 9P port needs privileges to bind, and not
   # every deployment wants a second frontend.
+  defp mysql do
+    if Config.get(:start_mysql) do
+      port = Config.get(:mysql_port)
+
+      [
+        Supervisor.child_spec(
+          {ThousandIsland, port: port, handler_module: Kurwa.Mysql.Server},
+          id: :kurwa_mysql
+        )
+      ]
+    else
+      []
+    end
+  end
+
   defp resp do
     if Config.get(:start_resp) do
       port = Config.get(:resp_port)

@@ -69,7 +69,11 @@ config :kurwadb,
 
   # Redis protocol: redis-cli and Redis clients, off by default
   start_resp: false,
-  resp_port: 6379
+  resp_port: 6379,
+
+  # MySQL protocol: mysql, mariadb and the MySQL connectors, off by default
+  start_mysql: false,
+  mysql_port: 3306
 
 config :logger, level: :info
 

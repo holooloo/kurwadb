@@ -152,6 +152,9 @@ defmodule Kurwa.Pg.Catalog do
     end
   end
 
+  @doc "The raw text of each top-level select-list item, as written."
+  def select_items(sql), do: sql |> top_level_items() |> Enum.map(&String.trim/1)
+
   defp top_level_items(sql) do
     case Regex.run(~r/^\s*(?:\/\*.*?\*\/\s*)*SELECT\s+(?:DISTINCT\s+)?/is, sql, return: :index) do
       [{start, len}] ->
@@ -178,10 +181,18 @@ defmodule Kurwa.Pg.Catalog do
   defp take_until_from(<<?), rest::binary>>, depth, acc),
     do: take_until_from(rest, depth - 1, [?) | acc])
 
-  defp take_until_from(<<c, f, r, o, m, n, _rest::binary>>, 0, acc)
-       when c in ~c" \t\r\n" and f in ~c"Ff" and r in ~c"Rr" and o in ~c"Oo" and m in ~c"Mm" and
-              n in ~c" \t\r\n",
-       do: finish(acc)
+  # The list ends at the first top-level clause keyword: FROM usually, but a
+  # SELECT with no FROM can go straight to LIMIT, WHERE or the end.
+  @ends ~w(from where limit order group having union into for offset window)
+
+  defp take_until_from(<<c, rest::binary>>, 0, acc) when c in ~c" \t\r\n" do
+    word = rest |> String.split(~r/[^A-Za-z]/, parts: 2) |> hd() |> String.downcase()
+    after_word = binary_part(rest, byte_size(word), byte_size(rest) - byte_size(word))
+
+    if word in @ends and (after_word == "" or String.first(after_word) =~ ~r/[\s(;]/),
+      do: finish(acc),
+      else: take_until_from(rest, 0, [c | acc])
+  end
 
   defp take_until_from(<<c, rest::binary>>, depth, acc),
     do: take_until_from(rest, depth, [c | acc])

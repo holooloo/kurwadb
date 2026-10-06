@@ -10,7 +10,7 @@ Application.get_env(:kurwadb, :data_dir)
 # The cluster tests boot real nodes, which takes seconds each. They are opt-in:
 #
 #     mix test --include cluster
-# The psql tests need the psql binary:
+# The psql and mysql tests need those clients installed:
 #
-#     mix test --include psql
-ExUnit.start(exclude: [:cluster, :psql])
+#     mix test --include psql --include mysql
+ExUnit.start(exclude: [:cluster, :psql, :mysql])

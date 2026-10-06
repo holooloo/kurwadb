@@ -147,6 +147,15 @@ defmodule Kurwa.Sql.Exec do
 
   defp execute({:utility, _kind, tag}, _params, _session), do: {:command, tag}
 
+  # MySQL's USE: there is one database, and the frontend says whether this is it.
+  defp execute({:use, database}, _params, _session), do: {:use, database}
+
+  # MySQL's DESCRIBE: every set has the one column, and it is the key.
+  defp execute({:describe_table, _set}, _params, _session) do
+    columns = for name <- ~w(Field Type Null Key Default Extra), do: {name, :text}
+    {:rows, columns, [["key", "varchar(255)", "NO", "PRI", nil, ""]], "SELECT 1"}
+  end
+
   defp execute({:set, {name, value}}, _params, _session),
     do: {:set, String.downcase(name), unquote_value(value), "SET"}
 
@@ -264,6 +273,15 @@ defmodule Kurwa.Sql.Exec do
   # -------------------------------------------------------------- expressions
 
   defp eval({:lit, value}, _params, _session), do: value
+  defp eval({:uservar, _name}, _params, _session), do: nil
+
+  defp eval({:sysvar, name}, _params, session) do
+    case Map.fetch(Map.get(session, :sysvars, %{}), name) do
+      {:ok, value} -> value
+      :error -> fail("HY000", "Unknown system variable '#{name}'")
+    end
+  end
+
   defp eval({:array, exprs}, params, session), do: Enum.map(exprs, &eval(&1, params, session))
 
   defp eval({:param, n}, params, _session) do
@@ -311,7 +329,13 @@ defmodule Kurwa.Sql.Exec do
     end
   end
 
-  defp call("version", [], _s), do: version()
+  defp call("version", [], s), do: Map.get(s, :version, version())
+  defp call("database", [], s), do: Map.get(s, :database, "kurwadb")
+  defp call("schema", [], s), do: Map.get(s, :database, "kurwadb")
+  defp call("connection_id", [], s), do: s.pid
+  defp call("last_insert_id", [], _s), do: 0
+  defp call("found_rows", [], _s), do: 0
+  defp call("row_count", [], _s), do: -1
   defp call("current_database", [], s), do: Map.get(s, :database, "kurwadb")
   defp call("current_catalog", [], s), do: Map.get(s, :database, "kurwadb")
   defp call("current_schema", [], _s), do: "public"
@@ -450,6 +474,12 @@ defmodule Kurwa.Sql.Exec do
 
   defp type({:call, name, _}, _) when name in ~w(kurwa_ttl kurwa_count), do: :int8
   defp type({:call, "pg_backend_pid", _}, _), do: :int4
+
+  defp type({:call, name, _}, _)
+       when name in ~w(connection_id last_insert_id found_rows row_count), do: :int8
+
+  defp type({:sysvar, _}, _), do: :text
+  defp type({:uservar, _}, _), do: :text
   defp type({:call, _, _}, _), do: :text
 
   # A parameter's type comes from where it sits: in a key position it is text,

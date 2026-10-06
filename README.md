@@ -33,10 +33,11 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 319 tests, ~3s
+mix test                          # 331 tests, ~3s
 mix test --include cluster        # 19 more, ~14s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 mix test --include psql           # the real psql against the PostgreSQL frontend
+mix test --include mysql          # the real mysql client against the MySQL frontend
 ```
 
 The cluster tests boot actual distributed nodes and assert the guarantees this
@@ -199,6 +200,32 @@ what changed; `MULTI`/`EXEC` queue and run in order, without isolation from
 other clients. RESP2 and RESP3, pipelining, `AUTH` with `auth_token`.
 `test/drivers/redis_py_check.py` runs redis-py against it.
 
+## MySQL protocol
+
+`mysql`, `mariadb` and the MySQL connectors (PyMySQL, Connector/Python, mysql2)
+connect as they would to MySQL 8. The tables are the same as over PostgreSQL;
+`key` is a reserved word in MySQL, so it is written with backticks:
+
+```sh
+KURWA_MYSQL=1 KURWA_MYSQL_PORT=3307 iex -S mix
+mysql -h 127.0.0.1 -P 3307 kurwadb
+```
+
+```sql
+INSERT INTO seen VALUES ('order:1'), ('order:2');          -- 2 rows affected
+INSERT IGNORE INTO seen VALUES ('order:1'), ('order:3');   -- 1 row affected: only the new one
+SELECT `key` FROM seen WHERE `key` IN (?, ?);             -- prepared, binary protocol
+DELETE FROM seen WHERE `key` = 'order:1';                 -- 1, or 0 if it was not there
+SHOW TABLES;  DESCRIBE seen;  SHOW VARIABLES LIKE 'version%';
+```
+
+`INSERT IGNORE` has one winner among concurrent inserts, like `SET NX`.
+Authentication is `caching_sha2_password` or `mysql_native_password`, with
+`auth_token` as the password; TLS is not offered on this port, which clients'
+default `ssl-mode=PREFERRED` accepts. Columns are named as MySQL names them, so
+dictionary cursors find `DATABASE()` under that name. `test/drivers/` has
+PyMySQL, Connector/Python and mysql2 checks.
+
 ## Configuration
 
 Every setting has a default, so the app boots with no config at all. Environment
@@ -224,7 +251,8 @@ variables are read at boot (`config/runtime.exs`).
 | `pg_auth` | `KURWA_PG_AUTH` | `:scram` | `:scram`, `:md5` or `:password`, when `auth_token` is set |
 | `pg_tls` | `KURWA_PG_TLS_CERT` `KURWA_PG_TLS_KEY` | none | `:ssl` server options; with them, SSLRequest is accepted |
 | `start_resp` `resp_port` | `KURWA_RESP` `KURWA_RESP_PORT` | `false`, 6379 | the Redis protocol |
-| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, password for PostgreSQL and Redis `AUTH` |
+| `start_mysql` `mysql_port` | `KURWA_MYSQL` `KURWA_MYSQL_PORT` | `false`, 3306 | the MySQL protocol |
+| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, the password for PostgreSQL, MySQL and Redis `AUTH` |
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
 allowed and logged as a warning, because it is a real durability decision.
@@ -260,6 +288,7 @@ Kurwa.NineP           9P2000
 Kurwa.Pg              the PostgreSQL wire protocol, and enough pg_catalog for psql
 Kurwa.Sql             the SQL a set understands, shared by any SQL frontend
 Kurwa.Resp            the Redis protocol, RESP2 and RESP3
+Kurwa.Mysql           the MySQL protocol, text and binary result sets
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure

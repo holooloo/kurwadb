@@ -40,6 +40,14 @@ defmodule Kurwa.Sql.Lexer do
     end
   end
 
+  # MySQL also comments with #.
+  defp lex(<<"#", rest::binary>>, :mysql = d, n, acc) do
+    case :binary.split(rest, "\n") do
+      [_comment, rest] -> lex(rest, d, n, acc)
+      [_comment] -> lex(<<>>, d, n, acc)
+    end
+  end
+
   defp lex(<<"/*", rest::binary>>, d, n, acc) do
     case :binary.split(rest, "*/") do
       [_comment, rest] -> lex(rest, d, n, acc)
@@ -49,8 +57,10 @@ defmodule Kurwa.Sql.Lexer do
 
   defp lex(<<q, rest::binary>>, d, n, acc) when q in [?', ?"] or (q == ?` and d == :mysql) do
     case quoted(rest, q, d, []) do
+      # In MySQL, without ANSI_QUOTES, "x" is a string, as 'x' is.
       {:ok, text, rest} ->
-        token = if q == ?', do: {:string, text}, else: {:qident, text}
+        string? = q == ?' or (q == ?" and d == :mysql)
+        token = if string?, do: {:string, text}, else: {:qident, text}
         lex(rest, d, n, [token | acc])
 
       :error ->

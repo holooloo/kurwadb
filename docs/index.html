@@ -760,7 +760,7 @@ member kurwa3@10.0.0.3 down</span>
   <section class="row">
     <div class="rail"><span class="eyebrow">PostgreSQL</span></div>
     <div class="col">
-      <h2>psql, redis-cli, and the driver you already have</h2>
+      <h2>psql, mysql, redis-cli, and the driver you already have</h2>
       <p>kurwadb speaks the PostgreSQL wire protocol. A set is a table with one column,
          <code>key</code>, and the queries are the ones a set can answer without a scan.</p>
 <pre><span class="k">INSERT INTO</span> seen <span class="k">VALUES</span> ('order:1'), ('order:2');
@@ -782,6 +782,10 @@ member kurwa3@10.0.0.3 down</span>
          transactions — <code>BEGIN</code> is accepted because drivers send it unasked,
          and <code>ROLLBACK</code> says nothing was rolled back. Around 140,000 prepared
          statements a second under pgbench, on one node.</p>
+      <p>The same tables answer over the MySQL protocol, to <code>mysql</code>,
+         <code>mariadb</code> and the MySQL connectors — <code>INSERT IGNORE</code>,
+         prepared statements, <code>SHOW TABLES</code>, columns named the way MySQL names
+         them — around 130,000 queries a second.</p>
       <p>It speaks RESP too. Redis sets are named sets, Redis keys are the default set, and
          the idempotency check works as it does against Redis:</p>
 <pre><span class="k">SET</span> order:1 x <span class="k">EX</span> 3600 <span class="k">NX</span>     <span class="c">OK</span>
