@@ -500,14 +500,53 @@ is how Redis users name things.
   `GET` is an error instead of an invented value, so code that reads values back
   fails where it would otherwise misbehave. `SET key x NX EX n` - the usual
   idempotency check - is what this store is for, and works.
-* **Counts are true, atomicity is not.** `SADD`, `SREM` and `DEL` read before
-  they write so their replies say what changed, and `SET NX` reads to decide.
-  Two clients racing on the same absent key can both be told they set it. Redis
-  serialises on one thread; a leaderless quorum has nothing to serialise on.
+* **`SET NX` has one winner.** It is the command an idempotency check stands
+  on, so it gets a real guarantee rather than a read and a write
+  (`Coordinator.add_new/2`, below). `SADD`, `SREM` and `DEL` read before they
+  write so their replies say what changed; those counts can be off by a racing
+  client, which is the one place kurwadb is looser than Redis.
 * **`MULTI`/`EXEC`** queue commands and run them in order, because client
   libraries wrap pipelines in them by default (redis-py's `pipeline()` does).
-  There is no isolation. `WATCH` is refused: optimistic locking needs a version
-  to compare, and the caller has no way to ask for one.
+  There is no isolation from other clients.
+* **`WATCH`** is optimistic locking, and works as clients use it: the version
+  of each watched key - Lamport stamp and origin - is read at `WATCH` and again
+  at `EXEC`, and if any moved, `EXEC` runs nothing and answers a null array,
+  which is redis-py's `WatchError`. The second read and the commands are two
+  steps, so a change in between is missed. Watching a set name is refused: its
+  members are keys with their own versions, and a watch that cannot see a
+  change is worse than an error.
+
+### One winner without a leader
+
+`Kurwa.add_new/2` - `SET NX`, `SETNX`, and SQL's `INSERT ... ON CONFLICT DO
+NOTHING` - adds a key only if it is absent, and of any number of concurrent
+calls for one absent key, at most one is told it did.
+
+Each replica decides for itself, atomically: the shard process is the only
+writer of its keys, so "is it live? if not, write it" is one step there. A
+call wins when a majority **of the configured `n`** created its record. Two
+majorities of the same `n` replicas share at least one replica, and that
+replica created exactly one of the two records, so two calls cannot both have
+a majority. The majority is of `n`, not of the replicas that answered: with
+fewer than a majority reachable, the call fails (`:no_majority`, Redis's
+`NOREPLICAS`) rather than letting both sides of a partition win.
+
+That alone is safe and nearly useless. The first version asked all replicas
+at once, and each coordinator's own replica - answered inline, before any
+message from another node could arrive - created that coordinator's record
+first. Three coordinators, three replicas, three different winners, no
+majority: in a cluster test, 135 keys of 150 ended with no winner. So the
+request now goes to the first reachable replica in the key's preference list
+alone, which is the same replica for every coordinator, and only the call that
+gets past it goes on to the rest. Since then the same test gives every key
+exactly one winner.
+
+The ordering is for liveness only. Coordinators that disagree about which
+replica is first - one of them cannot see it - still each need a majority, so
+a disagreement can produce no winner but never two. No winner means every
+caller hears `:exists`: for an idempotency key, nobody processes the message,
+which is the safe way to be wrong. The cost is a second round trip: 47 µs
+against `add`'s 40 on three nodes.
 * **Scans** - `KEYS`, `SCAN`, `SMEMBERS`, `SCARD`, `FLUSHDB` and the set algebra
   commands - are refused with the reason, as everywhere.
 

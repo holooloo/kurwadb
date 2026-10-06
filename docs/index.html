@@ -788,8 +788,10 @@ member kurwa3@10.0.0.3 down</span>
 <span class="k">SET</span> order:1 x <span class="k">EX</span> 3600 <span class="k">NX</span>     <span class="c">(nil)</span>
 <span class="k">SADD</span> seen:orders a b         <span class="c">(integer) 2</span>
 <span class="k">GET</span> order:1                  <span class="c">ERR kurwadb stores keys without values</span></pre>
-      <p>There are no values, so <code>GET</code> refuses rather than invent one, and
-         <code>SET NX</code> is not atomic the way it is on Redis's single thread.</p>
+      <p>There are no values, so <code>GET</code> refuses rather than invent one.
+         <code>SET NX</code> has one winner among concurrent callers, as on Redis — not
+         from a single thread but from a majority of replicas, and <code>WATCH</code>
+         aborts an <code>EXEC</code> when a watched key changed.</p>
     </div>
   </section>
 

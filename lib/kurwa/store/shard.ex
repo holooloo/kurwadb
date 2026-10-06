@@ -41,6 +41,21 @@ defmodule Kurwa.Store.Shard do
     :exit, reason -> {:error, {:shard_unavailable, reason}}
   end
 
+  @doc """
+  Writes `record` only if this shard holds no live version of its key.
+
+  Atomic against every other write to the shard, because the shard is the one
+  process that writes it: the look and the write cannot be split by another
+  put. `{:exists, current}` when the key is live here; `{:stale, winner}` when a
+  newer tombstone beat the record. A live version equal to `previous` - this
+  coordinator's own earlier attempt - counts as absent.
+  """
+  def put_new(index, record, previous \\ nil, timeout \\ 5_000) do
+    GenServer.call(name(index), {:put_new, record, previous}, timeout)
+  catch
+    :exit, reason -> {:error, {:shard_unavailable, reason}}
+  end
+
   @doc "Forces a compaction (snapshot + fresh WAL)."
   def compact(index), do: GenServer.call(name(index), :compact, 60_000)
 
@@ -81,6 +96,19 @@ defmodule Kurwa.Store.Shard do
   def handle_call({:put, record}, _from, state) do
     {result, winner, engine_state} = state.engine.put(state.engine_state, record)
     {:reply, {result, winner}, %{state | engine_state: engine_state}}
+  end
+
+  @impl true
+  def handle_call({:put_new, record, previous}, _from, state) do
+    current = state.engine.get(state.engine.handle(name(state.index)), Kurwa.Record.key(record))
+
+    if Kurwa.Record.member?(current) and
+         not (previous != nil and Kurwa.Record.same_version?(current, previous)) do
+      {:reply, {:exists, current}, state}
+    else
+      {result, winner, engine_state} = state.engine.put(state.engine_state, record)
+      {:reply, {result, winner}, %{state | engine_state: engine_state}}
+    end
   end
 
   @impl true

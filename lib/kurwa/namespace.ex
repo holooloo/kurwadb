@@ -49,6 +49,19 @@ defmodule Kurwa.Namespace do
     end
   end
 
+  @doc "Adds `key` to `name` only if absent: `:ok` or `:exists`. See `Kurwa.add_new/2`."
+  @spec add_new(name(), binary(), keyword()) :: :ok | :exists | {:error, term()}
+  def add_new(name, key, opts \\ []) do
+    case Extractor.add_new(key, [set: name] ++ opts) do
+      :ok ->
+        Registry.register(name)
+        :ok
+
+      other ->
+        other
+    end
+  end
+
   @doc "Every set the cluster knows about, and the nodes that could not be asked."
   @spec list(keyword()) :: {:ok, %{sets: [name()], unreachable: map()}}
   defdelegate list(opts \\ []), to: Registry

@@ -232,10 +232,10 @@ defmodule Kurwa.Sql.Parser do
     with {:ok, table, rest} <- table(tokens),
          {:ok, columns, rest} <- columns(rest),
          {:ok, rows, rest} <- values(rest),
-         {:ok, returning, rest} <- conflict_and_returning(rest),
+         {:ok, conflict, returning, rest} <- conflict_and_returning(rest),
          :ok <- finished(rest),
          :ok <- arity(columns, rows) do
-      {:ok, {:insert, table, columns, rows, returning}}
+      {:ok, {:insert, table, columns, rows, returning, conflict}}
     end
   end
 
@@ -274,19 +274,30 @@ defmodule Kurwa.Sql.Parser do
 
   defp rows(_, _), do: error("42601", "expected a row of values")
 
+  # ON CONFLICT [(key)] DO NOTHING makes the insert conditional, so its count
+  # says which rows were new - the SQL spelling of SET NX. DO UPDATE has nothing
+  # to update on a key.
   defp conflict_and_returning(tokens) do
-    rest =
+    conflict =
       case tokens do
-        [{:ident, "on"}, {:ident, "conflict"} | rest] -> skip_to(rest, "nothing")
-        rest -> rest
+        [{:ident, "on"}, {:ident, "conflict"} | rest] ->
+          if Enum.any?(rest, &(&1 == {:ident, "update"})),
+            do:
+              error("0A000", "ON CONFLICT DO UPDATE: a key has nothing to update; use DO NOTHING"),
+            else: {:nothing, skip_to(rest, "nothing")}
+
+        rest ->
+          {nil, rest}
       end
 
-    case rest do
-      [{:ident, "returning"} | rest] ->
-        with {:ok, items, rest} <- items(rest, []), do: {:ok, items, rest}
+    with {conflict, rest} when conflict in [nil, :nothing] <- conflict do
+      case rest do
+        [{:ident, "returning"} | rest] ->
+          with {:ok, items, rest} <- items(rest, []), do: {:ok, conflict, items, rest}
 
-      rest ->
-        {:ok, nil, rest}
+        rest ->
+          {:ok, conflict, nil, rest}
+      end
     end
   end
 
@@ -309,7 +320,7 @@ defmodule Kurwa.Sql.Parser do
   defp delete(tokens) do
     with {:ok, table, rest} <- table(tokens),
          {:ok, where, rest} <- where(rest),
-         {:ok, returning, rest} <- conflict_and_returning(rest),
+         {:ok, _conflict, returning, rest} <- conflict_and_returning(rest),
          :ok <- finished(rest) do
       case where do
         nil ->

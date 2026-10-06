@@ -33,8 +33,8 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 313 tests, ~3s
-mix test --include cluster        # 17 more, ~12s: three real nodes, three real BEAMs
+mix test                          # 319 tests, ~3s
+mix test --include cluster        # 19 more, ~14s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 mix test --include psql           # the real psql against the PostgreSQL frontend
 ```
@@ -142,6 +142,7 @@ SELECT key FROM seen WHERE key IN ('order:1', 'order:3'); -- the members among t
 SELECT key FROM seen WHERE key = ANY($1);                 -- the same, one text[] parameter
 SELECT EXISTS (SELECT 1 FROM seen WHERE key = $1);
 DELETE FROM seen WHERE key = 'order:1';                   -- DELETE 1, or DELETE 0 if it was not there
+INSERT INTO seen VALUES ($1) ON CONFLICT DO NOTHING;       -- INSERT 0 1 for one caller, 0 0 for the rest
 SELECT kurwa_ttl('seen', 'session:9'), kurwa_count();
 \dt                                                       -- sets, as tables
 ```
@@ -189,11 +190,14 @@ GET order:1                  error: there are no values to return
 SMEMBERS seen:orders         error: it would be a scan
 ```
 
-`SET` discards its value; `GET` refuses rather than invent one. `SADD`, `SREM`
-and `DEL` report what changed. `SET NX` and those counts look before they write,
-so unlike Redis they are not atomic. `MULTI`/`EXEC` queue and run in order with
-no isolation, and `WATCH` is refused. RESP2 and RESP3, pipelining, `AUTH` with
-`auth_token`. `test/drivers/redis_py_check.py` runs redis-py against it.
+`SET` discards its value; `GET` refuses rather than invent one. `SET NX` has a
+single winner among concurrent callers, as on Redis, without a leader - a
+majority of replicas has to agree, and the reasoning is in
+[ARCHITECTURE.md](ARCHITECTURE.md#one-winner-without-a-leader). `WATCH` works:
+`EXEC` runs nothing if a watched key changed. `SADD`, `SREM` and `DEL` report
+what changed; `MULTI`/`EXEC` queue and run in order, without isolation from
+other clients. RESP2 and RESP3, pipelining, `AUTH` with `auth_token`.
+`test/drivers/redis_py_check.py` runs redis-py against it.
 
 ## Configuration
 

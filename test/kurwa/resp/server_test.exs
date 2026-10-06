@@ -1,6 +1,8 @@
 defmodule Kurwa.Resp.ServerTest do
   use ExUnit.Case, async: false
 
+  import Kurwa.TestHelpers, only: [eventually: 1]
+
   setup_all do
     {:ok, server} = ThousandIsland.start_link(port: 0, handler_module: Kurwa.Resp.Server)
     {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
@@ -45,6 +47,9 @@ defmodule Kurwa.Resp.ServerTest do
         String.to_integer(n)
 
       "$-1" ->
+        nil
+
+      "*-1" ->
         nil
 
       "_" ->
@@ -141,8 +146,49 @@ defmodule Kurwa.Resp.ServerTest do
 
     assert [{:simple, "OK"}, {:error, _}, {:error, "EXECABORT" <> _}] =
              pipeline(s, [["MULTI"], ["NOSUCH"], ["EXEC"]])
+  end
 
-    assert {:error, _} = command(s, ["WATCH", "k"])
+  test "WATCH: EXEC runs nothing if another client changed the key", %{
+    port: port,
+    socket: s,
+    key: k
+  } do
+    {:ok, other} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false], 2_000)
+    on_exit(fn -> :gen_tcp.close(other) end)
+
+    assert command(s, ["WATCH", k]) == {:simple, "OK"}
+    assert command(other, ["SET", k, "1"]) == {:simple, "OK"}
+
+    assert pipeline(s, [["MULTI"], ["SET", "#{k}:after", "1"], ["EXEC"]]) ==
+             [{:simple, "OK"}, {:simple, "QUEUED"}, nil]
+
+    assert command(s, ["EXISTS", "#{k}:after"]) == 0
+
+    # Unchanged, it runs; and EXEC ends the watch either way.
+    assert command(s, ["WATCH", k]) == {:simple, "OK"}
+
+    assert pipeline(s, [["MULTI"], ["SET", "#{k}:after", "1"], ["EXEC"]]) ==
+             [{:simple, "OK"}, {:simple, "QUEUED"}, [{:simple, "OK"}]]
+  end
+
+  test "WATCH on a set name is refused, not silently blind", %{socket: s, set: set} do
+    command(s, ["SADD", set, "a"])
+
+    eventually(fn ->
+      {:ok, %{sets: sets}} = Kurwa.Namespace.list()
+      set in sets
+    end)
+
+    assert {:error, message} = command(s, ["WATCH", set])
+    assert message =~ "set"
+  end
+
+  test "SET NX and SETNX answer for one winner", %{socket: s, key: k} do
+    assert pipeline(s, [["SETNX", k, "1"], ["SETNX", k, "1"], ["SET", k, "1", "NX"]]) == [
+             1,
+             0,
+             nil
+           ]
   end
 
   test "HELLO 3 switches the protocol, and nulls change shape", %{socket: s, key: k} do

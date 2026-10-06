@@ -174,6 +174,21 @@ of Redis over RESP and suggested the gap Redis held over HTTP was HTTP and
 JSON. The RESP frontend measured that properly, one client against both
 servers, and the suggestion was wrong: see the next section.
 
+## SET NX: one winner, two round trips
+
+`Kurwa.add_new/2` - `SET NX`, `INSERT ... ON CONFLICT DO NOTHING` - asks the
+first replica in a key's preference list alone, then the rest (see
+ARCHITECTURE.md, "One winner without a leader"). `bench/cluster.exs`, three
+nodes, 0.12.0, two runs:
+
+| | `add` | `add_new` |
+|---|---|---|
+| single client | 40.5 – 41.3 µs | 47.1 – 47.8 µs |
+| 64 clients | 61 900 – 66 400 ops/sec | 58 200 – 59 900 ops/sec |
+
+The second round trip costs less than a whole one because a third of the time
+the coordinator is itself the first replica and phase one is local.
+
 ## The Redis frontend, against Redis
 
 0.11.0 answers RESP, so `redis-benchmark` can drive both servers the same way:

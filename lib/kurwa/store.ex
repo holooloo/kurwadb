@@ -48,6 +48,13 @@ defmodule Kurwa.Store do
     record |> Record.key() |> shard_for() |> Shard.put(record)
   end
 
+  @doc "Writes `record` only if its key is not live here. See `Kurwa.Store.Shard.put_new/3`."
+  @spec put_new(Record.t()) ::
+          {:ok, Record.t()} | {:exists, Record.t()} | {:stale, Record.t()} | {:error, term()}
+  def put_new(record, previous \\ nil) do
+    record |> Record.key() |> shard_for() |> Shard.put_new(record, previous)
+  end
+
   @doc """
   Local version of `key`, tombstones included.
 

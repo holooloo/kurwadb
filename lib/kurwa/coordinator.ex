@@ -44,6 +44,93 @@ defmodule Kurwa.Coordinator do
   @spec add(Record.key(), keyword()) :: :ok | error()
   def add(key, opts \\ []) when is_binary(key), do: write(key, true, opts)
 
+  @doc """
+  Adds `key` only if it is not already in the set: `:ok` if this call added it,
+  `:exists` if it was there.
+
+  At most one of any number of concurrent calls for the same absent key gets
+  `:ok`. Each replica decides atomically - its shard looks and writes in one
+  step - and a call wins only if a **majority of the configured `n`** created
+  its record. Two majorities of the same replicas always share one, and that
+  replica created only one of the two records, so two winners cannot both
+  have a majority. That holds however many replicas are reachable, which is
+  why the majority is of `n`, not of the replicas that answered: with fewer
+  reachable than a majority the call fails with `:no_majority` instead of
+  letting each side of a partition win.
+
+  Racing calls are put in order by the first reachable replica in the key's
+  preference list, which every coordinator asks first and alone: one of them
+  gets past it, the rest are told `:exists`, and the one goes on to the others.
+  That is what makes a winner the normal outcome. It is not what makes two
+  winners impossible - the majority does that, even when coordinators disagree
+  about which replica is first - and when they do disagree, a race can end with
+  no winner at all: neither proceeds, which for an idempotency key is the safe
+  way to be wrong. The price of the order is a second round trip.
+
+  Same options as `add/2`, `ttl:` included.
+  """
+  @spec add_new(Record.key(), keyword()) :: :ok | :exists | error()
+  def add_new(key, opts \\ []) when is_binary(key), do: add_new(key, opts, 2, nil)
+
+  # `previous` is this call's own first attempt, which a retry must not mistake
+  # for somebody else's key.
+  defp add_new(key, opts, attempts, previous) do
+    with {:ok, placement} <- placement(key, opts) do
+      timeout = Keyword.get(opts, :timeout, Config.request_timeout())
+      n = Keyword.get(opts, :n, Config.n())
+      majority = div(n, 2) + 1
+      targets = placement.up
+
+      if length(targets) < majority do
+        {:error, {:no_majority, %{needed: majority, reachable: length(targets)}}}
+      else
+        record = Record.new(key, Clock.tick(), node(), true, nil, expiry(opts))
+        request = {:put_new, record, previous}
+        [first | rest] = targets
+
+        # Phase one: the first reachable replica in preference order, which is
+        # the same replica for every coordinator. It decides atomically, so of
+        # racing calls exactly one gets past it - without this, each
+        # coordinator's own replica answered it first, every replica chose a
+        # different winner, and nobody had a majority.
+        lead = Quorum.request([first], request, 1, timeout)
+        lead_answers = Enum.map(lead.ok, &elem(&1, 1))
+
+        case lead_answers do
+          [{:exists, _}] ->
+            :exists
+
+          [{:stale, winner}] when attempts > 1 ->
+            Clock.observe(Record.lamport(winner))
+            add_new(key, opts, attempts - 1, record)
+
+          _created_or_failed ->
+            # Phase two: the rest, side by side. Safety does not rest on phase
+            # one - coordinators that disagree about which replica is first
+            # still need a majority each, and two majorities share a replica
+            # that created only one record.
+            lead_created = Enum.count(lead_answers, &match?({:created, _}, &1))
+            need = majority - lead_created
+
+            settled? = fn %{ok: ok, failed: failed} ->
+              created = Enum.count(ok, &match?({_, {:created, _}}, &1))
+              created >= need or length(ok) - created + length(failed) > length(rest) - need
+            end
+
+            outcome = Quorum.request(rest, request, settled?, timeout)
+            answers = Enum.map(outcome.ok, &elem(&1, 1))
+            created = lead_created + Enum.count(answers, &match?({:created, _}, &1))
+
+            cond do
+              created >= majority -> :ok
+              created > 0 or Enum.any?(answers, &match?({:exists, _}, &1)) -> :exists
+              true -> {:error, {:quorum_not_met, details(:write, majority, placement, outcome)}}
+            end
+        end
+      end
+    end
+  end
+
   @doc "Removes `key` from the set (writes a tombstone)."
   @spec delete(Record.key(), keyword()) :: :ok | error()
   def delete(key, opts \\ []) when is_binary(key), do: write(key, false, opts)

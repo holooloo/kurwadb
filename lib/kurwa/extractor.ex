@@ -57,6 +57,11 @@ defmodule Kurwa.Extractor do
   @spec add(binary(), opts()) :: :ok | {:error, term()}
   def add(key, opts \\ []) when is_binary(key), do: write(key, opts, &Coordinator.add/2, true)
 
+  @doc "Adds `key` only if absent: `:ok` or `:exists`. See `Kurwa.Coordinator.add_new/2`."
+  @spec add_new(binary(), opts()) :: :ok | :exists | {:error, term()}
+  def add_new(key, opts \\ []) when is_binary(key),
+    do: write(key, opts, &Coordinator.add_new/2, true)
+
   @doc "Removes `key`, then writes the answer through the cache."
   @spec delete(binary(), opts()) :: :ok | {:error, term()}
   def delete(key, opts \\ []) when is_binary(key),
@@ -129,6 +134,11 @@ defmodule Kurwa.Extractor do
         end
 
         :ok
+
+      # add_new found the key there: nothing was written, and the cache, if it
+      # holds anything, already holds the truth.
+      :exists ->
+        :exists
 
       {:error, _reason} = error ->
         # A failed write may still have reached some replicas, so the honest

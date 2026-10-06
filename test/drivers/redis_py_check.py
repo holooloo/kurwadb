@@ -42,6 +42,26 @@ for protocol in (2, 3):
         pipe.sadd(s, f"m{i}")
     check(p + "plain pipeline", sum(pipe.execute()), 100)
 
+    # WATCH, as applications use it: optimistic, with WatchError on a change.
+    other = redis.Redis(port=port, protocol=protocol, decode_responses=True)
+    w = f"py:{protocol}:watched"
+    r.set(w, 1)
+    with r.pipeline() as pipe:
+        pipe.watch(w)
+        other.set(w, 2)          # another client moves the key
+        pipe.multi()
+        pipe.set(w + ":done", 1)
+        try:
+            pipe.execute()
+            sys.exit("FAIL exec ran after the watched key changed")
+        except redis.WatchError:
+            check(p + "watch conflict", r.exists(w + ":done"), 0)
+    with r.pipeline() as pipe:
+        pipe.watch(w)
+        pipe.multi()
+        pipe.set(w + ":done", 1)
+        check(p + "watch clean", pipe.execute(), [True])
+
     try:
         r.smembers(s)
         sys.exit("FAIL smembers allowed")

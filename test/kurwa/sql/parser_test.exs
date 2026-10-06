@@ -35,13 +35,21 @@ defmodule Kurwa.Sql.ParserTest do
   end
 
   test "inserts with and without columns, ttl, ON CONFLICT and RETURNING" do
-    assert {:insert, "seen", nil, [[{:lit, "a"}], [{:lit, "b"}]], nil} =
+    assert {:insert, "seen", nil, [[{:lit, "a"}], [{:lit, "b"}]], nil, nil} =
              one("INSERT INTO seen VALUES ('a'), ('b')")
 
     assert {:insert, "seen", ["key", "ttl"], [[{:param, 1}, {:param, 2}]],
-            [{{:col, "key"}, "key"}]} =
+            [{{:col, "key"}, "key"}], :nothing} =
              one(
                "INSERT INTO seen (key, ttl) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING key"
+             )
+
+    assert {:insert, "seen", nil, _, nil, :nothing} =
+             one("INSERT INTO seen VALUES ('a') ON CONFLICT (key) DO NOTHING")
+
+    assert {:error, "0A000", _} =
+             Parser.parse(
+               "INSERT INTO seen VALUES ('a') ON CONFLICT (key) DO UPDATE SET key = 'b'"
              )
 
     assert {:error, "42703", _} = Parser.parse("INSERT INTO seen (value) VALUES ('a')")

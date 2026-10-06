@@ -23,9 +23,16 @@ defmodule Kurwa.Resp.Commands do
   both be told they set it. Redis gives that atomically; kurwadb, with no
   leader to serialise on, does not.
 
+  `SET NX` and `SETNX` are the exception to "look, then write": they go through
+  `Kurwa.add_new/2`, so of concurrent callers for one absent key at most one is
+  told OK - what an idempotency check on Redis relies on.
+
   `MULTI` and `EXEC` queue commands and run them in order, which is what
-  pipelining clients wrap their batches in. There is no isolation, and `WATCH`
-  is refused, because there is nothing to watch with.
+  pipelining clients wrap their batches in; there is no isolation from other
+  clients. `WATCH` works as clients use it: EXEC answers a null array, and
+  runs nothing, if a watched key's version changed since the WATCH. The check
+  and the commands are two steps, so a change landing between them is not
+  seen; the retry loop that Redis clients build on WATCH works.
   """
 
   alias Kurwa.Coordinator
@@ -37,7 +44,14 @@ defmodule Kurwa.Resp.Commands do
 
   @doc "A fresh connection's state."
   def session,
-    do: %{proto: 2, authed: false, name: nil, multi: nil, id: System.unique_integer([:positive])}
+    do: %{
+      proto: 2,
+      authed: false,
+      name: nil,
+      multi: nil,
+      watched: %{},
+      id: System.unique_integer([:positive])
+    }
 
   @doc """
   Runs one request. Returns `{reply, session}`, or `{:close, reply, session}`
@@ -52,7 +66,7 @@ defmodule Kurwa.Resp.Commands do
       needs_auth?(session) and command not in ~w(AUTH HELLO QUIT) ->
         {{:error, "NOAUTH Authentication required."}, session}
 
-      session.multi != nil and command not in ~w(EXEC DISCARD MULTI WATCH QUIT RESET) ->
+      session.multi != nil and command not in ~w(EXEC DISCARD MULTI WATCH UNWATCH QUIT RESET) ->
         queue(command, args, session)
 
       true ->
@@ -116,24 +130,25 @@ defmodule Kurwa.Resp.Commands do
     {[Integer.to_string(div(us, 1_000_000)), Integer.to_string(rem(us, 1_000_000))], s}
   end
 
-  defp dispatch("RESET", [], s), do: {{:simple, "RESET"}, %{s | multi: nil, proto: 2, name: nil}}
+  defp dispatch("RESET", [], s),
+    do: {{:simple, "RESET"}, %{s | multi: nil, proto: 2, name: nil, watched: %{}}}
 
   # --------------------------------------------------------------- string keys
 
   defp dispatch("SET", [key, _value | options], s) do
-    {condition, ttl} = set_options(options, nil, nil)
-    exists? = condition != nil and member?(nil, key)
+    case set_options(options, nil, nil) do
+      {:nx, ttl} ->
+        if add_new(key, ttl), do: {{:simple, "OK"}, s}, else: {nil, s}
 
-    cond do
-      condition == :nx and exists? -> {nil, s}
-      condition == :xx and not exists? -> {nil, s}
-      true -> ok!(add(nil, key, ttl)) && {{:simple, "OK"}, s}
+      {:xx, ttl} ->
+        if member?(nil, key), do: ok!(add(nil, key, ttl)) && {{:simple, "OK"}, s}, else: {nil, s}
+
+      {nil, ttl} ->
+        ok!(add(nil, key, ttl)) && {{:simple, "OK"}, s}
     end
   end
 
-  defp dispatch("SETNX", [key, _value], s) do
-    if member?(nil, key), do: {0, s}, else: ok!(add(nil, key, nil)) && {1, s}
-  end
+  defp dispatch("SETNX", [key, _value], s), do: {if(add_new(key, nil), do: 1, else: 0), s}
 
   defp dispatch("SETEX", [key, seconds, _value], s),
     do: ok!(add(nil, key, positive!(seconds) * 1000)) && {{:simple, "OK"}, s}
@@ -207,22 +222,45 @@ defmodule Kurwa.Resp.Commands do
       {{:error, "EXECABORT Transaction discarded because of previous errors."}, %{s | multi: nil}}
 
   defp dispatch("EXEC", [], %{multi: queued} = s) do
-    queued
-    |> Enum.reverse()
-    |> Enum.map_reduce(%{s | multi: nil}, fn request, s ->
-      case run(request, s) do
-        {:close, reply, s} -> {reply, s}
-        {reply, s} -> {reply, s}
-      end
-    end)
+    s = %{s | multi: nil}
+
+    # WATCH: if any watched key moved since it was watched, EXEC does nothing
+    # and answers with a null array, which is how clients know to retry.
+    if watch_broken?(s.watched) do
+      {:null_array, %{s | watched: %{}}}
+    else
+      queued
+      |> Enum.reverse()
+      |> Enum.map_reduce(%{s | watched: %{}}, fn request, s ->
+        case run(request, s) do
+          {:close, reply, s} -> {reply, s}
+          {reply, s} -> {reply, s}
+        end
+      end)
+    end
   end
 
   defp dispatch("DISCARD", [], %{multi: nil} = s), do: {{:error, "ERR DISCARD without MULTI"}, s}
 
-  defp dispatch("DISCARD", [], s), do: {{:simple, "OK"}, %{s | multi: nil}}
+  defp dispatch("DISCARD", [], s), do: {{:simple, "OK"}, %{s | multi: nil, watched: %{}}}
 
-  defp dispatch("WATCH", _keys, _s),
-    do: fail("ERR WATCH is not supported: kurwadb has no way to see a concurrent change")
+  defp dispatch("WATCH", _keys, %{multi: multi}) when multi != nil,
+    do: fail("ERR WATCH inside MULTI is not allowed")
+
+  # Remembers the version of each key - its Lamport stamp and origin - as the
+  # cluster answers it now. A set name cannot be watched this way: its members
+  # are separate keys with versions of their own, so a change to them would go
+  # unseen, and a WATCH that cannot see is worse than none.
+  defp dispatch("WATCH", [_ | _] = keys, s) do
+    if Enum.any?(keys, &(Key.valid_name?(&1) and &1 in known_sets())),
+      do:
+        fail("ERR WATCH on a set is not supported: kurwadb can watch a key, not a set's members")
+
+    watched = Enum.reduce(keys, s.watched, fn key, acc -> Map.put_new(acc, key, version(key)) end)
+    {{:simple, "OK"}, %{s | watched: watched}}
+  end
+
+  defp dispatch("UNWATCH", [], s), do: {{:simple, "OK"}, %{s | watched: %{}}}
 
   # ---------------------------------------------------------------- refusals
 
@@ -245,7 +283,7 @@ defmodule Kurwa.Resp.Commands do
 
   @known ~w(PING ECHO QUIT HELLO AUTH SELECT CLIENT COMMAND INFO DBSIZE TIME RESET SET SETNX SETEX
             PSETEX EXISTS DEL UNLINK EXPIRE PEXPIRE PERSIST TTL PTTL TYPE SADD SREM SISMEMBER
-            SMISMEMBER MULTI EXEC DISCARD)
+            SMISMEMBER MULTI EXEC DISCARD WATCH UNWATCH)
 
   defp known?(command), do: command in @known
 
@@ -383,6 +421,32 @@ defmodule Kurwa.Resp.Commands do
         fail(
           "ERR \"#{name}\" is not a usable set name: letters, digits and _ . : -, not starting with _"
         )
+  end
+
+  # SET NX: one winner among concurrent callers. See Kurwa.Coordinator.add_new/2.
+  defp add_new(key, ttl) do
+    case Kurwa.add_new(key, if(ttl, do: [ttl: ttl], else: [])) do
+      :ok -> true
+      :exists -> false
+      {:error, {:no_majority, _}} -> fail("NOREPLICAS Not enough good replicas to write.")
+      {:error, reason} -> fail("ERR the cluster could not answer: #{inspect(reason)}")
+    end
+  end
+
+  defp version(key) do
+    case ok!(Coordinator.lookup(Key.encode(nil, key))) do
+      nil -> nil
+      record -> {Record.lamport(record), elem(record, 2), Record.member?(record)}
+    end
+  end
+
+  defp watch_broken?(watched), do: Enum.any?(watched, fn {key, seen} -> version(key) != seen end)
+
+  defp known_sets do
+    case Namespace.list() do
+      {:ok, %{sets: sets}} -> sets
+      _ -> []
+    end
   end
 
   defp add(nil, key, nil), do: Kurwa.add(key)

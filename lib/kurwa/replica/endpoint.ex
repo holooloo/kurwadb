@@ -47,6 +47,10 @@ defmodule Kurwa.Replica.Endpoint do
   @spec name_for(Replica.request() | term()) :: atom()
   def name_for({:get, key}), do: name(:erlang.phash2(key, @count))
   def name_for({:put, record}), do: name(:erlang.phash2(Record.key(record), @count))
+
+  def name_for({:put_new, record, _previous}),
+    do: name(:erlang.phash2(Record.key(record), @count))
+
   # Anything else is answered with an error by Kurwa.Replica.handle/1 - it still
   # needs somewhere to go, so a malformed request is a reply and not a crash.
   def name_for(_other), do: name(0)

@@ -46,7 +46,8 @@ defmodule Kurwa.Quorum do
   the collector and die with it. A node that drops off while we wait answers
   at once through its monitor, rather than at the deadline.
   """
-  @spec request([node()], Replica.request(), pos_integer(), timeout()) :: outcome()
+  @spec request([node()], Replica.request(), pos_integer() | (outcome() -> boolean()), timeout()) ::
+          outcome()
   def request(nodes, request, need, timeout)
 
   def request([], _request, _need, _timeout), do: %{ok: [], failed: []}
@@ -54,15 +55,18 @@ defmodule Kurwa.Quorum do
   # The only replica is this node: there is nobody to wait for and no late reply
   # that could land in the caller's mailbox, so the collector would be a process
   # started to do nothing. A single node, and n=1, answer inline.
-  def request([only], request, _need, _timeout) when only == node() do
+  def request([only], request, need, _timeout) when only == node() and is_integer(need) do
     case invoke(fn _ -> Replica.handle(request) end, only) do
       {:ok, value} -> %{ok: [{only, value}], failed: []}
       {:error, reason} -> %{ok: [], failed: [{only, reason}]}
     end
   end
 
+  # `need` is a count of successes, or a function of the outcome so far that
+  # says when the answer is settled - a conditional write is settled by a
+  # majority either way, not by the first `w` replies.
   def request(nodes, request, need, timeout)
-      when is_list(nodes) and is_integer(need) and need > 0 do
+      when is_list(nodes) and ((is_integer(need) and need > 0) or is_function(need, 1)) do
     caller = self()
     tag = make_ref()
 
@@ -134,7 +138,7 @@ defmodule Kurwa.Quorum do
   end
 
   defp replies(pending, need, deadline, ok, failed) do
-    if length(ok) >= need or map_size(pending) == 0 do
+    if settled?(need, ok, failed) or map_size(pending) == 0 do
       %{ok: ok, failed: failed}
     else
       wait = max(deadline - System.monotonic_time(:millisecond), 0)
@@ -156,6 +160,9 @@ defmodule Kurwa.Quorum do
       end
     end
   end
+
+  defp settled?(need, ok, _failed) when is_integer(need), do: length(ok) >= need
+  defp settled?(done?, ok, failed), do: done?.(%{ok: ok, failed: failed})
 
   defp drain(tag) do
     receive do

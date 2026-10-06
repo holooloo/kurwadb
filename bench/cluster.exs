@@ -17,7 +17,8 @@ latency = """
 n = 20_000
 {add, _} = :timer.tc(fn -> for i <- 1..n, do: :ok = Kurwa.add("lat:\#{i}") end)
 {get, _} = :timer.tc(fn -> for i <- 1..n, do: {:ok, true} = Kurwa.fetch("lat:\#{i}") end)
-{Float.round(add / n, 2), Float.round(get / n, 2)}
+{new, _} = :timer.tc(fn -> for i <- 1..n, do: :ok = Kurwa.add_new("new:\#{i}") end)
+{Float.round(add / n, 2), Float.round(get / n, 2), Float.round(new / n, 2)}
 """
 
 throughput = """
@@ -33,20 +34,23 @@ run = fn concurrency, per_worker, fun ->
 end
 
 writes = run.(64, 2_000, fn w, i -> :ok = Kurwa.add("tp:\#{w}:\#{i}") end)
+news = run.(64, 2_000, fn w, i -> :ok = Kurwa.add_new("tpn:\#{w}:\#{i}") end)
 reads = run.(64, 2_000, fn w, i -> {:ok, true} = Kurwa.fetch("tp:\#{w}:\#{i}") end)
 local = run.(64, 20_000, fn w, i -> {:ok, _} = Kurwa.Store.get(Kurwa.Key.encode("tp:\#{w}:\#{i}")) end)
-{writes, reads, local}
+{writes, reads, local, news}
 """
 
-{add, get} = TC.call(one, Code, :eval_string, [latency], 300_000) |> elem(0)
+{add, get, new} = TC.call(one, Code, :eval_string, [latency], 300_000) |> elem(0)
 IO.puts("single client, sequential")
 IO.puts("  add     (w=2)  #{add} us/op")
 IO.puts("  member? (r=2)  #{get} us/op")
+IO.puts("  add_new (majority, two phases)  #{new} us/op")
 
-{writes, reads, local} = TC.call(one, Code, :eval_string, [throughput], 600_000) |> elem(0)
+{writes, reads, local, news} = TC.call(one, Code, :eval_string, [throughput], 600_000) |> elem(0)
 IO.puts("\n64 concurrent clients, one coordinating node")
 IO.puts("  add     (w=2)  #{writes} ops/sec")
 IO.puts("  member? (r=2)  #{reads} ops/sec")
+IO.puts("  add_new        #{news} ops/sec")
 IO.puts("  local ETS read #{local} ops/sec")
 IO.puts("")
 

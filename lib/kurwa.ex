@@ -43,6 +43,14 @@ defmodule Kurwa do
   @spec add(key(), opts()) :: :ok | {:error, term()}
   def add(key, opts \\ []) when is_binary(key), do: Extractor.add(key, opts)
 
+  @doc """
+  Adds `key` only if it is not already there: `:ok` if this call added it,
+  `:exists` if not. Of concurrent calls for one absent key, at most one gets
+  `:ok` - see `Kurwa.Coordinator.add_new/2` for how, and for when none does.
+  """
+  @spec add_new(key(), opts()) :: :ok | :exists | {:error, term()}
+  def add_new(key, opts \\ []) when is_binary(key), do: Extractor.add_new(key, opts)
+
   @doc "Adds `key`, raising `Kurwa.Error` if the quorum is not met."
   @spec add!(key(), opts()) :: :ok
   def add!(key, opts \\ []), do: unwrap(add(key, opts))

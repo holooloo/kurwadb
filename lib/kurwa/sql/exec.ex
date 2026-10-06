@@ -68,7 +68,7 @@ defmodule Kurwa.Sql.Exec do
     {:rows, columns(select, params), rows, "SELECT #{length(rows)}"}
   end
 
-  defp execute({:insert, set, columns, rows, returning}, params, session) do
+  defp execute({:insert, set, columns, rows, returning, conflict}, params, session) do
     set = store_set(set)
 
     entries =
@@ -80,12 +80,31 @@ defmodule Kurwa.Sql.Exec do
         {key, ttl}
       end)
 
-    entries
-    |> concurrently(fn {key, ttl} -> add(set, key, if(ttl, do: [ttl: ttl * 1000], else: [])) end)
-    |> Enum.each(&ok!/1)
+    opts = fn ttl -> if ttl, do: [ttl: ttl * 1000], else: [] end
 
-    tag = "INSERT 0 #{length(entries)}"
-    returning(returning, Enum.map(entries, &elem(&1, 0)), set, params, session, tag)
+    # A plain INSERT of a key that is there is not an error, as it would be
+    # against a primary key: adding a member is idempotent here. With ON
+    # CONFLICT DO NOTHING the insert is conditional, so INSERT 0 1 or 0 0 - and
+    # RETURNING - say which rows were new, with one winner per key among
+    # concurrent inserts (Kurwa.Coordinator.add_new/2).
+    inserted =
+      case conflict do
+        nil ->
+          entries
+          |> concurrently(fn {key, ttl} -> add(set, key, opts.(ttl)) end)
+          |> Enum.each(&ok!/1)
+
+          Enum.map(entries, &elem(&1, 0))
+
+        :nothing ->
+          entries
+          |> Enum.uniq_by(&elem(&1, 0))
+          |> concurrently(fn {key, ttl} -> {key, add_new(set, key, opts.(ttl))} end)
+          |> Enum.flat_map(fn {key, answer} -> if new!(answer), do: [key], else: [] end)
+      end
+
+    tag = "INSERT 0 #{length(inserted)}"
+    returning(returning, inserted, set, params, session, tag)
   end
 
   defp execute({:delete, set, where, returning}, params, session) do
@@ -384,7 +403,7 @@ defmodule Kurwa.Sql.Exec do
     columns =
       case statement do
         {:select, select} -> columns(select, params)
-        {:insert, _, _, _, items} when items != nil -> item_columns(items, params)
+        {:insert, _, _, _, items, _} when items != nil -> item_columns(items, params)
         {:delete, _, _, items} when items != nil -> item_columns(items, params)
         {:show, name} -> [{name, :text}]
         _ -> nil
@@ -450,7 +469,7 @@ defmodule Kurwa.Sql.Exec do
     if select.limit, do: place(select.limit, :int8, acc), else: acc
   end
 
-  defp placements({:insert, _set, columns, rows, _ret}, acc) do
+  defp placements({:insert, _set, columns, rows, _ret, _conflict}, acc) do
     Enum.reduce(rows, acc, fn row, acc ->
       row
       |> Enum.zip(columns || ["key", "ttl"])
@@ -493,6 +512,21 @@ defmodule Kurwa.Sql.Exec do
 
   defp add(nil, key, opts), do: Kurwa.add(key, opts)
   defp add(set, key, opts), do: Namespace.add(set, key, opts)
+
+  defp add_new(nil, key, opts), do: Kurwa.add_new(key, opts)
+  defp add_new(set, key, opts), do: Namespace.add_new(set, key, opts)
+
+  defp new!(:ok), do: true
+  defp new!(:exists), do: false
+
+  defp new!({:error, {:no_majority, %{needed: needed, reachable: reachable}}}),
+    do:
+      fail(
+        "57P03",
+        "ON CONFLICT needs a majority of replicas: #{needed}, and #{reachable} are reachable"
+      )
+
+  defp new!(other), do: ok!(other)
 
   defp member?(nil, key), do: Kurwa.fetch(key)
   defp member?(set, key), do: Namespace.member?(set, key)

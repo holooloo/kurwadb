@@ -12,7 +12,8 @@ defmodule Kurwa.Replica do
   alias Kurwa.Record
   alias Kurwa.Store
 
-  @type request :: {:get, Record.key()} | {:put, Record.t()}
+  @type request ::
+          {:get, Record.key()} | {:put, Record.t()} | {:put_new, Record.t(), Record.t() | nil}
 
   @doc """
   Runs one hot-path request: a read or a write of one key. This is what
@@ -22,6 +23,7 @@ defmodule Kurwa.Replica do
   @spec handle(request()) :: {:ok, Record.t() | nil} | {:error, term()}
   def handle({:get, key}), do: get(key)
   def handle({:put, record}), do: put(record)
+  def handle({:put_new, record, previous}), do: put_new(record, previous)
   def handle(other), do: {:error, {:bad_request, other}}
 
   @doc "Merges a replicated record into the local copy and returns the winner."
@@ -33,6 +35,25 @@ defmodule Kurwa.Replica do
         # holds something at least as new.
         {:ok, winner} -> {:ok, winner}
         {:stale, winner} -> {:ok, winner}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, {:bad_record, record}}
+    end
+  end
+
+  @doc """
+  The conditional write: `{:ok, {:created, record}}` if the key was not live
+  here and now holds `record`, `{:ok, {:exists, current}}` if it was live,
+  `{:ok, {:stale, winner}}` if a newer tombstone won.
+  """
+  @spec put_new(Record.t()) :: {:ok, {:created | :exists | :stale, Record.t()}} | {:error, term()}
+  def put_new(record, previous \\ nil) do
+    if valid_record?(record) and (previous == nil or valid_record?(previous)) do
+      case Store.put_new(record, previous) do
+        {:ok, winner} -> {:ok, {:created, winner}}
+        {:exists, current} -> {:ok, {:exists, current}}
+        {:stale, winner} -> {:ok, {:stale, winner}}
         {:error, reason} -> {:error, reason}
       end
     else

@@ -294,6 +294,47 @@ defmodule Kurwa.ClusterIntegrationTest do
     assert TC.call(two, Kurwa, :fetch, [key, [r: 3]]) == {:ok, true}
   end
 
+  # SET NX's guarantee: of concurrent conditional adds for one absent key, at
+  # most one is told it added it. Three coordinators race on every key.
+  test "concurrent add_new from every node: never two winners", %{peers: peers} do
+    keys = for i <- 1..150, do: "race:#{i}"
+
+    winners =
+      for key <- keys do
+        peers
+        |> Enum.map(fn peer -> Task.async(fn -> TC.call(peer, Kurwa, :add_new, [key]) end) end)
+        |> Task.await_many(10_000)
+        |> Enum.count(&(&1 == :ok))
+      end
+
+    assert Enum.max(winners) <= 1, "a key had #{Enum.max(winners)} winners"
+
+    # With every node up they all ask the same replica first, so each key has
+    # exactly one. (Before that ordering, 135 of 150 had none: each coordinator's
+    # own replica answered it first, and three replicas chose three winners.)
+    assert Enum.count(winners, &(&1 == 1)) == length(keys)
+
+    # And every key is now present, winner or not.
+    [one | _] = peers
+    for key <- keys, do: assert(TC.call(one, Kurwa, :fetch, [key, [r: 3]]) == {:ok, true})
+    assert TC.call(one, Kurwa, :add_new, ["race:1"]) == :exists
+  end
+
+  test "add_new needs a majority of n, and says so without one", %{peers: [one, two, three]} do
+    TC.stop(three)
+    TC.await_reachability(one, 3, 2)
+    assert TC.call(one, Kurwa, :add_new, ["two-of-three"]) == :ok
+
+    TC.stop(two)
+    TC.await_reachability(one, 3, 1)
+
+    assert {:error, {:no_majority, %{needed: 2, reachable: 1}}} =
+             TC.call(one, Kurwa, :add_new, ["alone"])
+
+    # A plain add still goes through with the lowered quorum, as before.
+    assert TC.call(one, Kurwa, :add, ["alone"]) == :ok
+  end
+
   # Replica requests carry no process monitor - it cost more than :erpc did -
   # so a replica that is gone must be reported by monitor_node, at once. Asked
   # directly, so that placement cannot quietly leave the dead nodes out first.

@@ -95,6 +95,8 @@ defmodule Kurwa.Resp.Proto do
   def encode({:simple, s}, _v), do: [?+, s, "\r\n"]
   def encode({:error, s}, _v), do: [?-, s, "\r\n"]
   def encode(n, _v) when is_integer(n), do: [?:, Integer.to_string(n), "\r\n"]
+  def encode(:null_array, 2), do: "*-1\r\n"
+  def encode(:null_array, 3), do: "_\r\n"
   def encode(nil, 2), do: "$-1\r\n"
   def encode(nil, 3), do: "_\r\n"
   def encode(true, 2), do: ":1\r\n"

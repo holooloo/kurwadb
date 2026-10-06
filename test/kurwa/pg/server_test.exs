@@ -82,6 +82,26 @@ defmodule Kurwa.Pg.ServerTest do
       assert C.tags(C.query(s, "DELETE FROM \"#{set}\" WHERE key = 'a'")) == ["DELETE 0"]
     end
 
+    test "ON CONFLICT DO NOTHING counts, and returns, only the new rows", %{socket: s, set: set} do
+      C.query(s, "INSERT INTO \"#{set}\" VALUES ('a')")
+
+      result =
+        C.query(
+          s,
+          "INSERT INTO \"#{set}\" VALUES ('a'), ('b') ON CONFLICT (key) DO NOTHING RETURNING key"
+        )
+
+      assert C.tags(result) == ["INSERT 0 1"]
+      assert C.rows(result) == [["b"]]
+
+      assert C.tags(C.query(s, "INSERT INTO \"#{set}\" VALUES ('b') ON CONFLICT DO NOTHING")) == [
+               "INSERT 0 0"
+             ]
+
+      # Without it, an insert of a member is idempotent, not an error.
+      assert C.tags(C.query(s, "INSERT INTO \"#{set}\" VALUES ('b')")) == ["INSERT 0 1"]
+    end
+
     test "the default set is the table kurwa", %{socket: s} do
       key = unique_key("pg")
       C.query(s, "INSERT INTO kurwa VALUES ('#{key}')")
