@@ -92,6 +92,11 @@
   h2:nth-of-type(3n + 2)::before { background: var(--teal); }
   h2:nth-of-type(3n + 3)::before { background: var(--leaf); }
 
+  h3 {
+    margin: clamp(28px, 4vw, 38px) 0 10px; font-size: clamp(1.1rem, 2.4vw, 1.3rem);
+    font-weight: 700; letter-spacing: -0.01em; text-wrap: balance;
+  }
+
   p { margin: 0 0 18px; text-wrap: pretty; }
 
   pre {
@@ -173,7 +178,7 @@
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 23 minutes</span>
+      <span>about 27 minutes</span>
       <span>re-measured 6 October 2026</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
@@ -653,6 +658,98 @@ remove  →  delete</code></pre>
        write that could be acknowledged and lost.</p>
   </blockquote>
 
+  <h2 id="five-protocols-one-path">Five protocols, one path</h2>
+
+  <p>Plan 9 turned out to be the first of several. kurwadb now also answers the
+     PostgreSQL, MySQL and Redis wire protocols, so <code>psql</code>, <code>mysql</code>,
+     <code>redis-cli</code> and the drivers people already have connect to it as they are.
+     That sounds like five products. It is one, and the reason is worth showing, because
+     it is the same reason 9P cost nothing: the store underneath was never told what a
+     protocol is.</p>
+
+  <p>Follow one query. A Python program, through psycopg, asks
+     <code>SELECT key FROM seen WHERE key = $1</code> with <code>'order:1'</code>:</p>
+
+<pre><code>psycopg              Parse, Bind, Execute, Sync - PostgreSQL protocol 3.0
+  │
+Kurwa.Pg.Server      one process per connection; bytes into messages
+  │
+Kurwa.Sql            text → tokens → {:select, from: "seen", where: key = $1}
+  │                  → Namespace.member?("seen", "order:1")
+  │  ── below here, nothing knows which protocol asked ──
+Coordinator          storage key &lt;&lt;4, "seen", "order:1"&gt;&gt;; ring → replicas A, B, C
+Quorum               the local replica inline, the others by message; wait for r = 2
+Store                ETS lookup - or memtable, Bloom filter, one pread of a block
+  │
+Record               {key, lamport, node, alive?, wall, expires_at}, merged by
+  │                  last-writer-wins; a replica that lagged is repaired
+Exec                 true → one row, ["order:1"]; false → no rows
+Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the socket</code></pre>
+
+  <p>Three different things get parsed, by three different layers. The <em>wire</em> is
+     the frontend's: framing, parameter types, text or binary formats, authentication —
+     all of it protocol-specific, none of it about keys. The <em>meaning</em> is the SQL
+     layer's, and it is shared: MySQL arrives through a different codec and a different
+     lexer dialect — backticks, <code>?</code> parameters — and leaves through the same
+     parser and executor as one call, <code>member?</code>. And the <em>data</em> is the
+     core's, which receives that same call whether it came from HTTP, a 9P
+     <code>stat</code>, a SQL <code>SELECT</code> or a Redis <code>SISMEMBER</code>.</p>
+
+  <p>As for "the value it returns": there is none to return. A record holds a key, a
+     Lamport stamp, the node that issued it, whether it is alive, a wall clock and an
+     expiry — and nothing a caller wrote other than the key. So the answer to a query is
+     the key itself, or no row; and the only other thing a table can be asked for is
+     <code>ttl</code>, which is derived from the expiry. That is not a limitation of the
+     frontends, it is the constraint this article started with, showing up at the far
+     end of the pipe.</p>
+
+  <p>What each protocol cost was almost entirely its own conversation, not the data.
+     PostgreSQL needed enough of <code>pg_catalog</code> for <code>\dt</code> to list
+     sets, SCRAM, and TLS with channel binding. MySQL needed the system variables its
+     client asks for before you have typed anything, and columns named by their source
+     text, because dictionary cursors look them up that way. Redis needed nothing it
+     did not already have, except honesty about <code>GET</code>, which is an error,
+     because there is no value to get. The one change that went into the core for any of
+     them was <code>add_new</code>, the conditional add behind <code>SET NX</code>,
+     <code>INSERT IGNORE</code> and <code>ON CONFLICT DO NOTHING</code> — and that one was
+     a guarantee the store should have offered anyway.</p>
+
+  <h3>And MongoDB, which is not built yet</h3>
+
+  <p>The same shape predicts what MongoDB would take: a frontend for OP_MSG and BSON,
+     and a table of commands mapped onto calls the core already answers. A collection is
+     a set; a document is <code>{_id: key}</code>.</p>
+
+  <div class="scroll">
+    <table>
+      <thead><tr><th>MongoDB</th><th>kurwadb</th></tr></thead>
+      <tbody>
+        <tr><td><code>find({_id: "a"})</code>, <code>{_id: {$in: […]}}</code></td><td>a membership check per key, returned as a cursor that needs no <code>getMore</code></td></tr>
+        <tr><td><code>insertOne({_id: "a"})</code></td><td><code>add_new</code> — and a second insert gets MongoDB's own <code>E11000 duplicate key</code></td></tr>
+        <tr><td><code>deleteOne({_id: "a"})</code></td><td><code>n: 1</code>, or <code>n: 0</code> if it was not there</td></tr>
+        <tr><td><code>show collections</code></td><td>the set registry</td></tr>
+        <tr><td><code>find({})</code>, a filter on anything but <code>_id</code></td><td>refused: it would be a scan</td></tr>
+        <tr><td>a document with fields other than <code>_id</code></td><td>refused: there are no values to keep</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things fit better than I expected. MongoDB already treats a duplicate
+     <code>_id</code> as an error, so the single-winner insert that had to be added as an
+     extension for SQL and Redis is simply MongoDB's ordinary semantics here. And the
+     cluster has a ready-made disguise: a <code>mongos</code> router. If every kurwadb
+     node answers <code>hello</code> the way a <code>mongos</code> does, drivers treat each
+     one as a router — spread requests across all of them, fail over when one goes away
+     — which is exactly true of a leaderless store, and needs no pretend primary.</p>
+
+  <p>The cost, as with the others, would be the conversation: <code>hello</code>,
+     <code>buildInfo</code>, sessions on every command, the dozen questions
+     <code>mongosh</code> asks at startup, SCRAM-SHA-256 over <code>saslStart</code> —
+     the same algorithm the PostgreSQL frontend already has, in different envelopes.
+     Nothing below <code>Exec</code> would change. That is the claim the other four
+     frontends were evidence for, and the reason I would expect it to hold for a
+     fifth.</p>
+
   <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
 
   <p>A tie with Redis on one node is not a reason to use anything. The reasons are
@@ -713,7 +810,8 @@ remove  →  delete</code></pre>
      way down and see what fell out. Remove values, and the merge function disappears.
      Remove the merge function, and the leader has nothing left to serialise. Remove the
      leader, and a membership check is one lookup in your own process. Then the thing
-     turns out to mount as a filesystem, and set union turns out to be free.</p>
+     turns out to mount as a filesystem, set union turns out to be free, and four wire
+     protocols turn out to be four thin adapters over one call.</p>
 
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
