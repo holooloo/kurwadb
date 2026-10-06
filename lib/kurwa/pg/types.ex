@@ -7,10 +7,11 @@ defmodule Kurwa.Pg.Types do
   so both are here.
   """
 
-  @type t :: :text | :bool | :int8 | :int4 | :int2 | :oid | :name | :unknown
+  @type t :: :text | :text_array | :bool | :int8 | :int4 | :int2 | :oid | :name | :unknown
 
   @oids %{
     text: {25, -1},
+    text_array: {1009, -1},
     bool: {16, 1},
     int8: {20, 8},
     int4: {23, 4},
@@ -20,7 +21,8 @@ defmodule Kurwa.Pg.Types do
     unknown: {705, -2}
   }
 
-  @by_oid Map.new(@oids, fn {type, {oid, _}} -> {oid, type} end)
+  # varchar (1043) and varchar[] (1015) read the same as text and text[].
+  @by_oid @oids |> Map.new(fn {type, {oid, _}} -> {oid, type} end) |> Map.put(1015, :text_array)
 
   @doc "`{oid, typlen}` for a type."
   def oid(type), do: Map.fetch!(@oids, type)
@@ -47,7 +49,24 @@ defmodule Kurwa.Pg.Types do
   or boolean type and sent it in binary.
   """
   def decode(nil, _oid, _format), do: nil
+
+  # A text[] in text format is an array literal; varchar[] (1015) is the same.
+  def decode(value, oid, 0) when oid in [1009, 1015] do
+    case Kurwa.Sql.ArrayLiteral.parse(value) do
+      {:ok, list} -> list
+      :error -> value
+    end
+  end
+
   def decode(value, _oid, 0), do: value
+
+  # The binary array format: dimensions, a null flag, the element type, then
+  # (size, lower bound) per dimension and each element length-prefixed.
+  def decode(<<1::32, _flags::32, _elem::32, count::32, _lower::32, rest::binary>>, oid, 1)
+      when oid in [1009, 1015],
+      do: elements(rest, count, [])
+
+  def decode(<<0::32, _flags::32, _elem::32>>, oid, 1) when oid in [1009, 1015], do: []
 
   def decode(value, oid, 1) do
     case {from_oid(oid), value} do
@@ -59,4 +78,10 @@ defmodule Kurwa.Pg.Types do
       {_text, value} -> value
     end
   end
+
+  defp elements(_rest, 0, acc), do: Enum.reverse(acc)
+  defp elements(<<-1::32-signed, rest::binary>>, n, acc), do: elements(rest, n - 1, [nil | acc])
+
+  defp elements(<<len::32, value::binary-size(len), rest::binary>>, n, acc),
+    do: elements(rest, n - 1, [value | acc])
 end

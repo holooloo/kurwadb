@@ -21,6 +21,9 @@ const check = (label, got, want) => {
   r = await client.query("SELECT key FROM nodeset WHERE key IN ($1, $2, $3)", ["n1", "n2", "n3"]);
   check("members", r.rows, [{ key: "n1" }, { key: "n2" }]);
 
+  r = await client.query("SELECT key FROM nodeset WHERE key = ANY($1)", [["n1", "n2", "nope"]]);
+  check("any with an array", r.rows, [{ key: "n1" }, { key: "n2" }]);
+
   for (let i = 0; i < 5; i++) {
     r = await client.query({ name: "is-member", text: "SELECT key FROM nodeset WHERE key = $1", values: [i % 2 ? "n1" : "zz"] });
     check(`named prepared ${i}`, r.rows.length, i % 2 ? 1 : 0);

@@ -88,9 +88,9 @@ defmodule Kurwa.Sql.Exec do
     returning(returning, Enum.map(entries, &elem(&1, 0)), set, params, session, tag)
   end
 
-  defp execute({:delete, set, {:keys, exprs}, returning}, params, session) do
+  defp execute({:delete, set, where, returning}, params, session) do
     set = store_set(set)
-    keys = exprs |> Enum.map(&(&1 |> eval(params, session) |> key!())) |> Enum.uniq()
+    keys = where_keys(where, params, session)
 
     # Read first, so the tag counts what was there: "DELETE 0" from a key that
     # was never added is how a client knows it did not consume anything.
@@ -150,9 +150,9 @@ defmodule Kurwa.Sql.Exec do
     )
   end
 
-  defp select_rows(%{where: {:keys, exprs}, from: set} = select, params, session) do
+  defp select_rows(%{where: where, from: set} = select, params, session) do
     set = store_set(set)
-    keys = exprs |> Enum.map(&(&1 |> eval(params, session) |> key!())) |> Enum.uniq()
+    keys = where_keys(where, params, session)
     keys = limit(keys, select.limit, params, session)
     wants_ttl? = Enum.any?(select.items, &match?({{:col, "ttl"}, _}, &1))
 
@@ -180,6 +180,27 @@ defmodule Kurwa.Sql.Exec do
         end)
     end
   end
+
+  # The keys a WHERE names: a list (key = x, key IN (...)) or one array
+  # (key = ANY(...)), which may still be the text of an array literal.
+  defp where_keys({:keys, exprs}, params, session),
+    do: exprs |> Enum.map(&(&1 |> eval(params, session) |> key!())) |> Enum.uniq()
+
+  defp where_keys({:any, expr}, params, session) do
+    expr |> eval(params, session) |> array!() |> Enum.map(&key!/1) |> Enum.uniq()
+  end
+
+  defp array!(list) when is_list(list), do: list
+
+  defp array!(text) when is_binary(text) do
+    case Kurwa.Sql.ArrayLiteral.parse(text) do
+      {:ok, list} -> list
+      :error -> fail("22P02", "malformed array literal: \"#{text}\"")
+    end
+  end
+
+  defp array!(nil), do: []
+  defp array!(other), do: fail("42804", "ANY needs an array, got #{inspect(other)}")
 
   defp aggregate(items) do
     counts = Enum.count(items, &match?({:count_star, _}, &1))
@@ -224,6 +245,7 @@ defmodule Kurwa.Sql.Exec do
   # -------------------------------------------------------------- expressions
 
   defp eval({:lit, value}, _params, _session), do: value
+  defp eval({:array, exprs}, params, session), do: Enum.map(exprs, &eval(&1, params, session))
 
   defp eval({:param, n}, params, _session) do
     case Enum.fetch(params, n - 1) do
@@ -289,6 +311,8 @@ defmodule Kurwa.Sql.Exec do
   defp call(name, _args, _s), do: fail("42883", "function #{name}() does not exist")
 
   defp cast(nil, _type), do: nil
+  defp cast(value, "text[]"), do: array!(value)
+  defp cast(value, "varchar[]"), do: array!(value)
 
   defp cast(value, type) when type in ~w(int int2 int4 int8 integer bigint smallint),
     do: integer(value)
@@ -440,9 +464,14 @@ defmodule Kurwa.Sql.Exec do
   defp placements(_statement, acc), do: acc
 
   defp keys({:keys, exprs}, acc), do: Enum.reduce(exprs, acc, &place(&1, :text, &2))
+  defp keys({:any, expr}, acc), do: place(expr, :text_array, acc)
   defp keys(nil, acc), do: acc
 
   defp place({:param, n}, type, acc), do: Map.put_new(acc, n, type)
+
+  defp place({:cast, expr, t}, _type, acc) when t in ["text[]", "varchar[]"],
+    do: place(expr, :text_array, acc)
+
   defp place({:cast, expr, t}, _type, acc), do: place(expr, type({:cast, nil, t}, nil), acc)
   defp place({:exists, select}, _type, acc), do: placements({:select, select}, acc)
 

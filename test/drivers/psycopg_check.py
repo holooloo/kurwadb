@@ -33,6 +33,13 @@ with psycopg.connect(dsn, autocommit=True) as conn:
     cur.execute("SELECT count(*) FROM pyset WHERE key IN (%s, %s, %s)", ("m1", "m49", "zz"))
     check("count of members", cur.fetchone(), (2,))
 
+    # A Python list goes over as one text[] parameter.
+    cur.execute("SELECT key FROM pyset WHERE key = ANY(%s)", (["m1", "m2", "zz"],))
+    check("any with a list", cur.fetchall(), [("m1",), ("m2",)])
+    bcur = conn.cursor(binary=True)
+    bcur.execute("SELECT key FROM pyset WHERE key = ANY(%s)", (["m3", "zz"],))
+    check("any with a list, binary", bcur.fetchall(), [("m3",)])
+
     # psycopg prepares server-side after prepare_threshold (5) executions.
     for i in range(10):
         cur.execute("SELECT key FROM pyset WHERE key = %s", (f"m{i}",))

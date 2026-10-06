@@ -11,6 +11,7 @@ defmodule Kurwa.Sql.Parser do
       INSERT INTO seen (key, ttl) VALUES ('a', 3600)   -- add, expiring in seconds
       SELECT key FROM seen WHERE key = 'a'             -- member: one row or none
       SELECT key FROM seen WHERE key IN ('a', 'b')     -- the members among these
+      SELECT key FROM seen WHERE key = ANY($1)         -- the same, with a text[] parameter
       SELECT count(*) FROM seen WHERE key = $1         -- 1 or 0
       SELECT EXISTS (SELECT 1 FROM seen WHERE key = $1)
       DELETE FROM seen WHERE key IN ('a', 'b')
@@ -193,8 +194,14 @@ defmodule Kurwa.Sql.Parser do
 
   defp where([{:ident, "where"} | rest]) do
     case rest do
-      [{:ident, "key"}, {:op, "="}, {:ident, "any"}, {:op, "("} | _] ->
-        error("0A000", "key = ANY(array) is not supported; use key IN (...)")
+      # What node-postgres and psycopg send for a list: one array parameter.
+      [{:ident, "key"}, {:op, "="}, {:ident, "any"}, {:op, "("} | rest] ->
+        with {:ok, expr, [{:op, ")"} | rest]} <- expr(rest) do
+          {:ok, {:any, expr}, rest}
+        else
+          {:ok, _, _} -> error("42601", "expected ) after ANY (...")
+          error -> error
+        end
 
       [{:ident, "key"}, {:op, "="} | rest] ->
         with {:ok, expr, rest} <- expr(rest), do: {:ok, {:keys, [expr]}, rest}
@@ -320,6 +327,9 @@ defmodule Kurwa.Sql.Parser do
     with {:ok, expr, rest} <- primary(tokens), do: casts(expr, rest)
   end
 
+  defp casts(expr, [{:op, "::"}, type, {:op, "["}, {:op, "]"} | rest]),
+    do: casts({:cast, expr, text(type) <> "[]"}, rest)
+
   defp casts(expr, [{:op, "::"}, type | rest]), do: casts({:cast, expr, text(type)}, rest)
   defp casts(expr, rest), do: {:ok, expr, rest}
 
@@ -330,6 +340,12 @@ defmodule Kurwa.Sql.Parser do
   defp primary([{:ident, "null"} | rest]), do: {:ok, {:lit, nil}, rest}
   defp primary([{:ident, "true"} | rest]), do: {:ok, {:lit, true}, rest}
   defp primary([{:ident, "false"} | rest]), do: {:ok, {:lit, false}, rest}
+
+  defp primary([{:ident, "array"}, {:op, "["}, {:op, "]"} | rest]), do: {:ok, {:array, []}, rest}
+
+  defp primary([{:ident, "array"}, {:op, "["} | rest]) do
+    with {:ok, exprs, rest} <- list(rest, [], "]"), do: {:ok, {:array, exprs}, rest}
+  end
 
   defp primary([{:ident, "count"}, {:op, "("}, {:op, "*"}, {:op, ")"} | rest]),
     do: {:ok, :count_star, rest}
@@ -383,14 +399,14 @@ defmodule Kurwa.Sql.Parser do
     with {:ok, args, rest} <- list(rest, []), do: {:ok, {:call, name, args}, rest}
   end
 
-  # A comma-separated list of expressions, ending at ")".
-  defp list(tokens, acc) do
+  # A comma-separated list of expressions, ending at ")" - or "]" for ARRAY[...].
+  defp list(tokens, acc, close \\ ")") do
     with {:ok, expr, rest} <- expr(tokens) do
       case rest do
-        [{:op, ","} | rest] -> list(rest, [expr | acc])
-        [{:op, ")"} | rest] -> {:ok, Enum.reverse([expr | acc]), rest}
+        [{:op, ","} | rest] -> list(rest, [expr | acc], close)
+        [{:op, ^close} | rest] -> {:ok, Enum.reverse([expr | acc]), rest}
         [token | _] -> unexpected(token)
-        [] -> error("42601", "expected )")
+        [] -> error("42601", "expected #{close}")
       end
     end
   end

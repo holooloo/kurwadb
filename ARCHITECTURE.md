@@ -428,8 +428,8 @@ rather than leaving it implied.
 `psql` and the PostgreSQL drivers connect to kurwadb as they would to
 PostgreSQL. A set is a table with one column, `key text`; the default set is the
 table `kurwa`. What a table can be asked is what the store can answer without a
-scan - insert keys, select them by key or `IN` list, count them by key, delete
-them by key - and `kurwa_*` functions cover what a table cannot say: TTLs, the
+scan - insert keys, select them by key, by `IN` list or by `= ANY(array)` (how
+drivers pass a list as one parameter), count them by key, delete them by key - and `kurwa_*` functions cover what a table cannot say: TTLs, the
 cluster-wide count, forgetting a set.
 
 It is three layers, so that another SQL wire protocol only replaces the first:

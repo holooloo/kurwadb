@@ -127,6 +127,37 @@ defmodule Kurwa.Pg.ServerTest do
     end
   end
 
+  describe "key = ANY(...)" do
+    test "an array literal and ARRAY[...] in a simple query", %{socket: s, set: set} do
+      C.query(s, "INSERT INTO \"#{set}\" VALUES ('a'), ('b c'), ('d')")
+
+      assert C.rows(C.query(s, ~s|SELECT key FROM "#{set}" WHERE key = ANY('{a,"b c",zz}')|)) ==
+               [["a"], ["b c"]]
+
+      assert C.tags(C.query(s, ~s|DELETE FROM "#{set}" WHERE key = ANY(ARRAY['d', 'zz'])|)) == [
+               "DELETE 1"
+             ]
+    end
+
+    test "a text[] parameter, described as such, in text and in binary", %{socket: s, set: set} do
+      C.query(s, "INSERT INTO \"#{set}\" VALUES ('a'), ('b')")
+
+      C.parse(s, "any", "SELECT key FROM \"#{set}\" WHERE key = ANY($1)")
+      C.describe(s, "S", "any")
+      C.bind(s, "", "any", [~s|{"a","zz"}|])
+      C.execute(s, "")
+
+      # one dimension, no nulls, text elements, two of them from index 1
+      binary = <<1::32, 0::32, 25::32, 2::32, 1::32, 1::32, "b", 2::32, "zz">>
+      C.bind(s, "", "any", [binary], [1])
+      C.execute(s, "")
+      result = C.sync_and_wait(s)
+
+      assert {:parameter_description, [1009]} in result
+      assert C.rows(result) == [["a"], ["b"]]
+    end
+  end
+
   describe "transactions" do
     test "status moves as PostgreSQL's would, and ROLLBACK warns", %{socket: s} do
       assert List.last(C.query(s, "BEGIN")) == {:ready, ?T}

@@ -101,6 +101,17 @@ defmodule Kurwa.Sql.ParserTest do
     assert {:ok, [{:catalog, ^sql}]} = Parser.parse(sql)
   end
 
+  test "key = ANY(...), with a parameter, a literal or ARRAY[...]" do
+    assert {:select, %{where: {:any, {:param, 1}}}} =
+             one("SELECT key FROM seen WHERE key = ANY($1)")
+
+    assert {:select, %{where: {:any, {:cast, {:param, 1}, "text[]"}}}} =
+             one("SELECT key FROM seen WHERE key = ANY($1::text[])")
+
+    assert {:delete, "seen", {:any, {:array, [{:lit, "a"}, {:lit, "b"}]}}, nil} =
+             one("DELETE FROM seen WHERE key = ANY(ARRAY['a', 'b'])")
+  end
+
   test "the MySQL dialect: backticks and positional parameters" do
     assert {:ok, [{:select, %{from: "my-set", where: {:keys, [{:param, 1}, {:param, 2}]}}}]} =
              Parser.parse("SELECT `key` FROM `my-set` WHERE key IN (?, ?)", :mysql)

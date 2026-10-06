@@ -139,6 +139,7 @@ psql "host=127.0.0.1 port=5433 dbname=kurwadb"
 INSERT INTO seen VALUES ('order:1'), ('order:2');
 INSERT INTO seen (key, ttl) VALUES ('session:9', 3600);   -- expires in an hour
 SELECT key FROM seen WHERE key IN ('order:1', 'order:3'); -- the members among these
+SELECT key FROM seen WHERE key = ANY($1);                 -- the same, one text[] parameter
 SELECT EXISTS (SELECT 1 FROM seen WHERE key = $1);
 DELETE FROM seen WHERE key = 'order:1';                   -- DELETE 1, or DELETE 0 if it was not there
 SELECT kurwa_ttl('seen', 'session:9'), kurwa_count();
