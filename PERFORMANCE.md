@@ -26,6 +26,7 @@ bench/lsm_http.sh                                  # both engines over HTTP, 1M 
 MIX_ENV=test mix run --no-start bench/quorum_parts.exs  # a quorum read, timed in parts
 bench/client_ceiling.sh                            # is the load generator the ceiling?
 bench/pg.sh                                        # the PostgreSQL frontend under pgbench
+REDIS_DIR=... bench/versus.sh                      # against Redis: HTTP, and RESP with RESP
 ```
 
 Measured on Apple M4, 10 cores, Elixir 1.20.4 / OTP 29. All three cluster nodes
@@ -58,15 +59,15 @@ the memory of every key that now deletes itself instead of being swept by hand.
 
 ## Single node, in-process
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 | 0.8.0 | 0.9.0 |
-|---|---|---|---|---|---|---|---|---|
-| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 33 ns | 31 ns |
-| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns | 292 ns | 320 ns |
-| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns | 339 ns | 361 ns |
-| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs | 1.60 µs | 1.59 µs |
-| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs | 1.78 µs | 1.90 µs |
-| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs | 5.08 µs | **4.52 µs** |
-| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs | 2.86 µs | **2.23 µs** |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.5.0 | 0.6.0 | 0.8.0 | 0.9.0 | 0.11.0 |
+|---|---|---|---|---|---|---|---|---|---|
+| `Clock.tick` | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 26 ns | 33 ns | 31 ns | 37 ns |
+| `Placement.targets` | 322 ns | 316 ns | 311 ns | 301 ns | 304 ns | 320 ns | 292 ns | 320 ns | 329 ns |
+| `Store.get` (ETS only) | 382 ns | 361 ns | 366 ns | 369 ns | 349 ns | 364 ns | 339 ns | 361 ns | 374 ns |
+| `Store.put` (shard + WAL) | 1.51 µs | 1.55 µs | 1.59 µs | 1.53 µs | 1.62 µs | 1.54 µs | 1.60 µs | 1.59 µs | 1.74 µs |
+| `Quorum.run`, one target | 1.86 µs | 1.84 µs | 1.87 µs | 1.80 µs | 1.83 µs | 1.88 µs | 1.78 µs | 1.90 µs | 1.93 µs |
+| `Kurwa.add` | 5.25 µs | 5.39 µs | 5.44 µs | 5.07 µs | 5.21 µs | 5.31 µs | 5.08 µs | **4.52 µs** | **3.28 µs** |
+| `Kurwa.member?` | 3.15 µs | 3.08 µs | 3.12 µs | 2.94 µs | 2.87 µs | 3.04 µs | 2.86 µs | **2.23 µs** | **1.24 µs** |
 
 A key with no expiry answers `member?` without reading the clock at all - the
 `:never` case is a separate function head - so TTL costs the keys that do not
@@ -76,15 +77,21 @@ variance. 0.9.0 is not: `Kurwa.add` and `Kurwa.member?` now go through
 is the old function, still used for `count` and the set registry. Mean of two
 runs.
 
+0.11.0 again, and for a smaller reason: when the only replica is the node
+itself - one node, or `n=1` - `Quorum.request` answers inline instead of
+starting a collector to wait for nobody. In a cluster nothing changes, because
+there is always a remote replica to wait for. `Store.put` reads 9% higher, and
+is inside its ±10%: nothing on that path changed.
+
 ## Three nodes, quorum (n=3 r=2 w=2)
 
-| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 | 0.9.0 |
-|---|---|---|---|---|---|---|---|
-| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs | — | 48.4 µs | **38.0 µs** |
-| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs | — | 50.9 µs | **40.8 µs** |
-| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec | 46 500 ops/sec | 46 200 ops/sec | **64 600 ops/sec** |
-| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec | 44 300 ops/sec | 48 000 ops/sec | **68 600 ops/sec** |
-| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec | 1 710 000 ops/sec | 1 859 000 ops/sec | 1 645 000 ops/sec |
+| | 0.1.0 | 0.2.0 | 0.3.0 | 0.4.0 | 0.4.0, re-run | 0.8.0 | 0.9.0 | 0.11.0 |
+|---|---|---|---|---|---|---|---|---|
+| `add`, single client | 46.6 µs | 45.7 µs | 45.3 µs | 41.5 µs | — | 48.4 µs | **38.0 µs** | 39.6 µs |
+| `member?`, single client | 46.8 µs | 46.4 µs | 47.3 µs | 45.7 µs | — | 50.9 µs | **40.8 µs** | 40.6 µs |
+| `add`, 64 clients | 54 300 ops/sec | 56 000 ops/sec | 55 200 ops/sec | 56 900 ops/sec | 46 500 ops/sec | 46 200 ops/sec | **64 600 ops/sec** | 63 800 ops/sec |
+| `member?`, 64 clients | 59 100 ops/sec | 58 400 ops/sec | 59 000 ops/sec | 60 900 ops/sec | 44 300 ops/sec | 48 000 ops/sec | **68 600 ops/sec** | 67 700 ops/sec |
+| local ETS read, 64 clients | 1 974 000 ops/sec | 1 962 000 ops/sec | 1 865 000 ops/sec | 1 959 000 ops/sec | 1 710 000 ops/sec | 1 859 000 ops/sec | 1 645 000 ops/sec | 1 543 000 ops/sec |
 
 **Read the last two columns together, not against the ones before them.** The
 cluster and HTTP benchmarks were not re-run for 0.5.0 – 0.7.0, which broke this
@@ -100,6 +107,9 @@ within a few percent, so the table above is unaffected.
 from 43 400 to 49 600 for `add`, wider than the ±7% quoted above. The re-run
 0.4.0 column is a single run. 0.9.0 is the median of three, measured on
 2026-10-06 on the same machine - see [What 0.9.0 changed](#what-090-changed).
+0.11.0 is the median of three the same day; every row is within 4% of 0.9.0,
+and the local ETS read - which no change since 0.8 touches - is the one that
+moved most, 6%, which is a fair measure of the noise.
 
 ## HTTP gateway, one node
 
@@ -159,11 +169,39 @@ replies were three writes. Collecting the replies and writing them once the
 input in hand is handled - which is when PostgreSQL itself flushes - took both
 to the simple protocol's rate.
 
-These are within a few percent of what Redis answered over RESP on this
-machine (142 800 with `redis-benchmark --threads 4`), and about 15% above
-kurwadb's own HTTP gateway. The load generators differ, so that is a hint and
-not a measurement - but the hint is that the 20% Redis led by over HTTP was
-HTTP and JSON, not the store underneath.
+An earlier version of this section noted that these were within a few percent
+of Redis over RESP and suggested the gap Redis held over HTTP was HTTP and
+JSON. The RESP frontend measured that properly, one client against both
+servers, and the suggestion was wrong: see the next section.
+
+## The Redis frontend, against Redis
+
+0.11.0 answers RESP, so `redis-benchmark` can drive both servers the same way:
+the same client binary, the same command, four client threads, 64 connections,
+one node each. `bench/versus.sh`, two runs on 2026-10-06:
+
+| `SISMEMBER` | Redis 8.0.3 | kurwadb, RESP | kurwadb, HTTP |
+|---|---|---|---|
+| one request at a time | 142 800 – 159 900 /sec | 124 900 – 128 800 /sec | 123 600 – 131 800 /sec |
+| pipelined, 16 per round trip | **1 640 000 – 1 830 000 /sec** | 735 000 – 820 000 /sec | — |
+
+Three things in that table.
+
+**The protocol was not the gap.** kurwadb answers RESP at the same rate it
+answers HTTP with a JSON body, and pgbench saw the same again. What Redis is
+ahead by, 15-20% one request at a time, is the cost of a request inside the
+server - a BEAM process per connection, a placement lookup, a quorum call even
+when the quorum is one - not the bytes on the wire.
+
+**Pipelined, Redis is 2.2 times faster.** A pipeline is where an event loop
+over an in-memory dictionary is at its best: sixteen lookups and one write,
+all on one thread. kurwadb runs the sixteen in order through the same path as
+one, at about 1 µs each. That is the price of the path being the same one a
+replicated read takes, and the honest summary is that Redis is the faster
+single server by a clear margin.
+
+**Latency is level.** p50 is 0.30 ms for kurwadb and 0.28-0.32 ms for Redis
+one request at a time.
 
 ## What 0.9.0 changed
 
@@ -476,9 +514,11 @@ interesting direction and is not a language question at all: what is in RAM is a
 Bloom filter, not the keys.
 
 **Redis is about 20% faster** on throughput, measured with clients that are not
-the bottleneck. That is the cost of HTTP and JSON against a binary protocol, and
-the honest way to close it is a binary protocol, not a faster HTTP server. An
-earlier version of this file called it a tie; it was a tie between two clients.
+the bottleneck. This paragraph used to call that the cost of HTTP and JSON and
+say a binary protocol would close it; with RESP built, kurwadb answers RESP no
+faster than HTTP, so it is the cost of a request inside the server. See
+"The Redis frontend, against Redis" above. An earlier version still called it a
+tie; it was a tie between two clients.
 
 Two caveats on the Redis side: it was built here without jemalloc (`malloc=libc`),
 which usually costs it a little memory, and a single Redis node is not doing the

@@ -60,7 +60,11 @@ config :kurwadb,
 
   # PostgreSQL wire protocol: psql and drivers, off by default
   start_pg: false,
-  pg_port: 5432
+  pg_port: 5432,
+
+  # Redis protocol: redis-cli and Redis clients, off by default
+  start_resp: false,
+  resp_port: 6379
 
 config :logger, level: :info
 

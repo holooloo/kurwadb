@@ -43,6 +43,7 @@ defmodule Kurwa.KeyTest do
     test "accepts what survives a URL segment and a directory name" do
       assert Key.valid_name?("blacklist")
       assert Key.valid_name?("tenant.42_v2-b")
+      assert Key.valid_name?("seen:orders")
       assert Key.valid_name?("A1")
       assert Key.valid_name?(String.duplicate("a", 255))
     end

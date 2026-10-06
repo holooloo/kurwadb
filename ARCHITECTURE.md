@@ -7,10 +7,10 @@ deliberately still missing.
 ## Shape
 
 ```
-  clients              HTTP        9P2000      PostgreSQL
-                         |            |             |
-  frontends       Kurwa.Gateway  Kurwa.NineP   Kurwa.Pg + Kurwa.Sql   thin adapters
-                           \          |          /
+  clients            HTTP       9P2000     PostgreSQL            Redis
+                       |           |            |                  |
+  frontends     Kurwa.Gateway Kurwa.NineP  Kurwa.Pg + Kurwa.Sql  Kurwa.Resp   thin adapters
+                           \          |          |               /
   api                  Kurwa / Kurwa.Namespace          keys and named sets
                                  |
   read path          Kurwa.Extractor                    cache + single-flight
@@ -476,6 +476,34 @@ prepared statement's Bind, Execute and Sync then cost one syscall rather than
 three. Under pgbench that was the difference between 70 000 and 136 000
 transactions a second.
 
+## The Redis frontend
+
+`Kurwa.Resp` speaks RESP2 and RESP3. The mapping takes the two Redis types that
+are already sets: Redis sets are named sets (`SADD`, `SREM`, `SISMEMBER`,
+`SMISMEMBER`), and Redis string keys are the default set, where the only thing
+a key can be is present. A set name may contain `:` since 0.11.0, because that
+is how Redis users name things.
+
+* **No values.** `SET` takes one because the command needs it, and discards it;
+  `GET` is an error instead of an invented value, so code that reads values back
+  fails where it would otherwise misbehave. `SET key x NX EX n` - the usual
+  idempotency check - is what this store is for, and works.
+* **Counts are true, atomicity is not.** `SADD`, `SREM` and `DEL` read before
+  they write so their replies say what changed, and `SET NX` reads to decide.
+  Two clients racing on the same absent key can both be told they set it. Redis
+  serialises on one thread; a leaderless quorum has nothing to serialise on.
+* **`MULTI`/`EXEC`** queue commands and run them in order, because client
+  libraries wrap pipelines in them by default (redis-py's `pipeline()` does).
+  There is no isolation. `WATCH` is refused: optimistic locking needs a version
+  to compare, and the caller has no way to ask for one.
+* **Scans** - `KEYS`, `SCAN`, `SMEMBERS`, `SCARD`, `FLUSHDB` and the set algebra
+  commands - are refused with the reason, as everywhere.
+
+Replies are collected and written once per read from the socket, so a pipeline
+is one write; the same thing doubled the PostgreSQL frontend's prepared rate.
+Against Redis, with the same client driving both, kurwadb is 15-20% behind one
+request at a time and 2.2 times behind pipelined - see PERFORMANCE.md.
+
 ## Decided, not built
 
 **Fallback vnodes.** A write still goes only to the reachable primaries, so
@@ -501,12 +529,15 @@ addressing ever becomes the point.
 purpose - the lexer already knows MySQL's backticks and `?` parameters - so a
 MySQL frontend is a codec (handshake, `COM_QUERY`, `COM_STMT_PREPARE` /
 `COM_STMT_EXECUTE`) over the same parser and executor, not a second SQL engine.
-Its cost is auth: `caching_sha2_password` wants TLS or an RSA exchange. RESP,
-the Redis protocol, is the more useful next one - the people with a "have I
-seen this" set mostly have it in Redis, and `redis-benchmark` would then compare
-protocol with protocol. MongoDB maps cleanly (a collection is a set, a document
-is `{_id: key}`) but its drivers open with `hello`, SCRAM, sessions and cursor
-management, so it waits for someone who needs it.
+Its cost is auth: `caching_sha2_password` wants TLS or an RSA exchange. MongoDB
+maps cleanly (a collection is a set, a document is `{_id: key}`) but its
+drivers open with `hello`, SCRAM, sessions and cursor management, so it waits
+for someone who needs it.
+
+**Faster pipelines.** Pipelined, Redis answers 2.2 times as many lookups. The
+sixteen reads of a pipeline run one after another through the full read path;
+consecutive reads with no write between them could run side by side, and their
+replies still go back in order. Worth it only if someone pipelines at that rate.
 
 **Per-set statistics**, blocked on the thing this store does not do: counting a
 set's members is a scan.

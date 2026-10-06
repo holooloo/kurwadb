@@ -51,6 +51,16 @@ defmodule Kurwa.Quorum do
 
   def request([], _request, _need, _timeout), do: %{ok: [], failed: []}
 
+  # The only replica is this node: there is nobody to wait for and no late reply
+  # that could land in the caller's mailbox, so the collector would be a process
+  # started to do nothing. A single node, and n=1, answer inline.
+  def request([only], request, _need, _timeout) when only == node() do
+    case invoke(fn _ -> Replica.handle(request) end, only) do
+      {:ok, value} -> %{ok: [{only, value}], failed: []}
+      {:error, reason} -> %{ok: [], failed: [{only, reason}]}
+    end
+  end
+
   def request(nodes, request, need, timeout)
       when is_list(nodes) and is_integer(need) and need > 0 do
     caller = self()

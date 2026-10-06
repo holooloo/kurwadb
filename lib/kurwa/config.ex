@@ -42,6 +42,8 @@ defmodule Kurwa.Config do
     ninep_port: 564,
     start_pg: false,
     pg_port: 5432,
+    start_resp: false,
+    resp_port: 6379,
     auth_token: nil
   }
 

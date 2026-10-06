@@ -19,6 +19,7 @@ REQUESTS=${REQUESTS:-1000000}
 CONCURRENCY=${CONCURRENCY:-64}
 RPORT=${RPORT:-7799}
 KPORT=${KPORT:-4070}
+KRESP=${KRESP:-6390}
 WORK=$(mktemp -d)
 
 if [ -z "$REDIS_DIR" ] || [ ! -x "$REDIS_DIR/redis-server" ]; then
@@ -70,15 +71,21 @@ echo
 # -q still streams progress lines; only the last one is the result
 # Both clients get the same number of threads: redis-benchmark is single
 # threaded by default, as ab is, and either one alone was the ceiling.
-"$REDIS_DIR/redis-benchmark" -p "$RPORT" -n "$REQUESTS" -c "$CONCURRENCY" --threads "$CLIENTS" -q \
-  SISMEMBER seen order:1000500 2>/dev/null | tr '\r' '\n' | grep "requests per second" | tail -1 |
-  sed 's/^/  redis RESP    /'
+resp_bench() {
+  local port=$1 pipeline=$2 label=$3
+  "$REDIS_DIR/redis-benchmark" -p "$port" -n "$((REQUESTS * pipeline))" -c "$CONCURRENCY" \
+    --threads "$CLIENTS" -P "$pipeline" -q SISMEMBER seen order:1000500 2>/dev/null |
+    tr '\r' '\n' | grep "requests per second" | tail -1 | sed "s/^/  $label /"
+}
+
+resp_bench "$RPORT" 1 "redis RESP         "
+resp_bench "$RPORT" 16 "redis RESP, -P 16  "
 
 kill "$RPID" 2>/dev/null || true
 unset RPID
 
 KURWA_DATA_DIR="$WORK/kurwa" KURWA_N=1 KURWA_R=1 KURWA_W=1 KURWA_HTTP_PORT="$KPORT" \
-  elixir -S mix run --no-halt >"$WORK/kurwa.log" 2>&1 &
+  KURWA_RESP=1 KURWA_RESP_PORT="$KRESP" elixir -S mix run --no-halt >"$WORK/kurwa.log" 2>&1 &
 KPID=$!
 for _ in $(seq 1 60); do
   curl -fsS -o /dev/null "http://127.0.0.1:$KPORT/health" 2>/dev/null && break
@@ -90,10 +97,14 @@ ab -n 5000 -c 32 -k -q "http://127.0.0.1:$KPORT/k/order:1000500" >/dev/null 2>&1
 sleep 2
 
 ab_parallel "$REQUESTS" "$CONCURRENCY" -k "http://127.0.0.1:$KPORT/k/order:1000500" |
-  grep "Requests per second" | sed 's/^/  kurwadb HTTP  /'
+  grep "Requests per second" | sed 's/^/  kurwadb HTTP         /'
+
+# The same client against both servers: kurwadb answering RESP itself.
+"$REDIS_DIR/redis-cli" -p "$KRESP" SADD seen order:1000500 >/dev/null
+resp_bench "$KRESP" 1 "kurwadb RESP       "
+resp_bench "$KRESP" 16 "kurwadb RESP, -P 16"
 
 echo
-echo "  The two lines above are not the same measurement: RESP is a binary"
-echo "  protocol and ours is HTTP/1.1 with a JSON body. What they compare is"
-echo "  two servers answering the same question, not two storage engines."
+echo "  The RESP lines compare like with like: one client, one protocol, two"
+echo "  servers. The HTTP line is kurwadb's gateway, HTTP/1.1 with a JSON body."
 echo

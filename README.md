@@ -33,7 +33,7 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 294 tests, ~3s
+mix test                          # 313 tests, ~3s
 mix test --include cluster        # 17 more, ~12s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 mix test --include psql           # the real psql against the PostgreSQL frontend
@@ -155,6 +155,34 @@ effect when it runs, and `ROLLBACK` says so. TLS is declined, and with
 `auth_token` set the password is the token, in cleartext. The reasons are in
 [ARCHITECTURE.md](ARCHITECTURE.md#the-postgresql-frontend).
 
+## Redis protocol
+
+`redis-cli`, `redis-benchmark` and Redis clients connect as they would to Redis.
+Redis sets are named sets, and Redis string keys are the default set, where a
+key either exists or does not:
+
+```sh
+KURWA_RESP=1 KURWA_RESP_PORT=6380 iex -S mix
+redis-cli -p 6380
+```
+
+```
+SET order:1 x EX 3600 NX     OK, then nil: the idempotency check
+EXISTS order:1               1
+TTL order:1                  3600
+DEL order:1                  1, and 0 the second time
+SADD seen:orders a b         2
+SMISMEMBER seen:orders a z   1 0
+GET order:1                  error: there are no values to return
+SMEMBERS seen:orders         error: it would be a scan
+```
+
+`SET` discards its value; `GET` refuses rather than invent one. `SADD`, `SREM`
+and `DEL` report what changed. `SET NX` and those counts look before they write,
+so unlike Redis they are not atomic. `MULTI`/`EXEC` queue and run in order with
+no isolation, and `WATCH` is refused. RESP2 and RESP3, pipelining, `AUTH` with
+`auth_token`. `test/drivers/redis_py_check.py` runs redis-py against it.
+
 ## Configuration
 
 Every setting has a default, so the app boots with no config at all. Environment
@@ -177,7 +205,8 @@ variables are read at boot (`config/runtime.exs`).
 | `http_port` | `KURWA_HTTP_PORT` | 4040 | |
 | `start_9p` `ninep_port` | `KURWA_9P` `KURWA_9P_PORT` | `false`, 564 | |
 | `start_pg` `pg_port` | `KURWA_PG` `KURWA_PG_PORT` | `false`, 5432 | the PostgreSQL wire protocol |
-| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for the HTTP API, password for PostgreSQL |
+| `start_resp` `resp_port` | `KURWA_RESP` `KURWA_RESP_PORT` | `false`, 6379 | the Redis protocol |
+| `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, password for PostgreSQL and Redis `AUTH` |
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
 allowed and logged as a warning, because it is a real durability decision.
@@ -212,6 +241,7 @@ Kurwa.Gateway         HTTP
 Kurwa.NineP           9P2000
 Kurwa.Pg              the PostgreSQL wire protocol, and enough pg_catalog for psql
 Kurwa.Sql             the SQL a set understands, shared by any SQL frontend
+Kurwa.Resp            the Redis protocol, RESP2 and RESP3
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure

@@ -552,9 +552,17 @@ remove  →  delete</code></pre>
      having hit theirs. <code>ab</code> is one thread, and so is
      <code>redis-benchmark</code> unless told otherwise. Against the same kurwadb node at
      the same 64 connections, one <code>ab</code> read 96,900 requests a second and four of
-     them, summed, 133,900. Given four client threads each, Redis pulls ahead again.
-     That gap is HTTP and JSON against a binary protocol, and closing it is a protocol
-     question, not a storage one.</p>
+     them, summed, 133,900. Given four client threads each, Redis pulls ahead again.</p>
+
+  <p>I put that remaining gap down to HTTP and JSON against a binary protocol, and wrote
+     that closing it was a protocol question. So kurwadb learned RESP, and the same
+     <code>redis-benchmark</code> drove both servers: one request at a time, Redis still
+     answers 15–20% more, and kurwadb answers RESP exactly as fast as it answers HTTP.
+     The protocol was never the gap. It is the cost of a request inside the server — a
+     process per connection, a placement lookup, a quorum of one — and pipelined, where
+     Redis's single thread over one dictionary is at its best, it leads by 2.2 times.
+     That is a real result about Redis, not a flaw in the measurement, and it belongs
+     in the same table as the memory figure that goes the other way.</p>
 
   <p>The site used to list the on-disk engine at "115–123k" over HTTP as well. The script
      never measured that: it writes a single key into whichever engine is the default, so
@@ -688,7 +696,7 @@ remove  →  delete</code></pre>
   <p>So, plainly, when not to use this:</p>
 
   <ul>
-    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, is about 20% faster on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
+    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, is 15–20% faster one request at a time and twice as fast pipelined, and uses four times less memory than the in-memory engine. Take it.</li>
     <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0 — less of a gap than it used to be, but still a real one.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
     <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>
@@ -710,7 +718,7 @@ remove  →  delete</code></pre>
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 257 tests — run against both engines — plus
+    <p><strong>kurwadb</strong> is MIT-licensed, 313 tests — run against both engines — plus
        17 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·

@@ -19,7 +19,9 @@ defmodule Kurwa.Key do
   """
 
   @max_name 255
-  @name_pattern ~r/^[A-Za-z0-9][A-Za-z0-9_.\-]*$/
+  # ':' because a Redis user's sets are called things like seen:orders, and it
+  # is as safe as '.' in a URL path segment and a 9P file name.
+  @name_pattern ~r/^[A-Za-z0-9][A-Za-z0-9_.:\-]*$/
 
   # Reserved namespaces begin with an underscore, which `valid_name?/1` rejects,
   # so nothing a caller can spell will ever land in one.
