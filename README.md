@@ -485,6 +485,7 @@ cannot: they learn every node from one (`KURWA.NODES` over RESP), spread
 requests over the healthy ones and move off a node that fails.
 
 - [Node.js](clients/js/README.md) - `clients/js`, no dependencies
+- [Go](clients/go/README.md) - `clients/go`, standard library only
 
 ## License
 
