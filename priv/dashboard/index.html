@@ -41,6 +41,9 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
 .err { color: var(--bad); }
 #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+#tip { position: fixed; pointer-events: none; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: none; z-index: 5; max-width: 320px; }
+#tip b { display: block; margin-bottom: 2px; }
+td.app { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) { header { padding: 12px 16px; gap: 14px; } main { padding: 12px 16px; } #topology { height: 720px; } }
 </style>
 </head>
@@ -55,6 +58,7 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
   <div class="stat"><b id="h-engine">-</b><small>engine</small></div>
   <div id="status">connecting…</div>
 </header>
+<div id="tip"></div>
 <main>
   <section class="card">
     <h2>Data flow</h2>
@@ -76,6 +80,11 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
     <div class="card"><h2>Memory</h2><svg class="chart" id="c-mem"></svg></div>
   </section>
   <section class="card">
+    <h2>Connected clients</h2>
+    <div class="tablewrap"><table id="t-clients"><thead><tr><th>node</th><th>protocol</th><th>client</th><th>application</th><th>user</th><th>connected</th><th>requests</th></tr></thead><tbody></tbody></table></div>
+    <div id="no-clients" class="legend">No open connections. HTTP requests are short-lived and only show up as traffic.</div>
+  </section>
+  <section class="card">
     <h2>Frontends</h2>
     <div class="tablewrap"><table id="t-front"><thead><tr><th>node</th><th>protocol</th><th>port</th><th>connections</th><th>req/s</th><th>errors/s</th><th>avg latency ms</th><th>total</th></tr></thead><tbody></tbody></table></div>
   </section>
@@ -92,6 +101,7 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : (Math.round(n * 10) / 10).toString();
 const bytes = (n) => n >= 1 << 30 ? (n / (1 << 30)).toFixed(2) + " GB" : (n / (1 << 20)).toFixed(0) + " MB";
 const dur = (s) => s >= 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : s >= 3600 ? Math.floor(s / 3600) + "h " + Math.floor(s % 3600 / 60) + "m" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const short = (node) => node.replace(/^kurwa(db)?@/, "").replace(/^(.{14}).+$/, "$1…");
 
 let state = { nodes: [] };
@@ -127,6 +137,12 @@ function render() {
   const fb = document.querySelector("#t-front tbody");
   fb.innerHTML = up.flatMap((n) => n.frontends.map((f) =>
     `<tr><td>${short(n.node)}</td><td><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--${f.name});margin-right:6px"></i>${LABEL[f.name]}</td><td>${f.port}</td><td>${f.connections}</td><td>${fmt(f.rps)}</td><td class="${f.errors > 0 ? "err" : ""}">${fmt(f.errors)}</td><td>${f.latency_ms.toFixed(3)}</td><td>${fmt(f.total)}</td></tr>`)).join("");
+
+  const now = Date.now() / 1000;
+  const clients = up.flatMap((n) => (n.clients || []).map((c) => ({ ...c, node: n.node })));
+  document.getElementById("no-clients").style.display = clients.length ? "none" : "";
+  document.querySelector("#t-clients tbody").innerHTML = clients.map((c) =>
+    `<tr><td>${short(c.node)}</td><td><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--${c.frontend});margin-right:6px"></i>${LABEL[c.frontend]}</td><td>${esc(c.peer)}</td><td class="app">${esc(c.app || "—")}</td><td>${esc(c.user || "—")}</td><td>${dur(Math.max(0, Math.round(now - c.since)))}</td><td>${fmt(c.requests)}</td></tr>`).join("");
 
   const nb = document.querySelector("#t-nodes tbody");
   nb.innerHTML = nodes.map((n) => n.up
@@ -192,6 +208,14 @@ function buildLayout() {
     const fy = y0 + rowH * 0.16;
     L.client = box(x0 + colW / 2 - 40, y0 + 30, 80, 4);
     L.fronts = fronts.map((f, j) => ({ f, b: box(x0 + colW / 2 - ftotal / 2 + j * (fw + 6), fy, fw, 46) }));
+    L.dots = [];
+    for (const { f, b } of L.fronts) {
+      const mine = (n.clients || []).filter((c) => c.frontend === f.name);
+      const shown = mine.slice(0, 6);
+      const gap = Math.min(16, (b.w - 8) / Math.max(1, shown.length));
+      shown.forEach((c, j) => L.dots.push({ c, f, x: b.cx + (j - (shown.length - 1) / 2) * gap, y: b.y - 30 }));
+      if (mine.length > 6) L.dots.push({ more: mine.length - 6, f, x: b.cx, y: b.y - 46 });
+    }
     L.coord = box(x0 + colW / 2 - Math.min(200, innerW) / 2, y0 + rowH * 0.40, Math.min(200, innerW), 44);
     L.replica = box(x0 + colW / 2 - Math.min(200, innerW) / 2, y0 + rowH * 0.58, Math.min(200, innerW), 44);
     const shards = n.up ? n.shards : [];
@@ -202,7 +226,7 @@ function buildLayout() {
 
     if (!n.up) return;
     for (const { f, b } of L.fronts) {
-      out.edges.push({ key: n.node + ">c>" + f.name, from: [b.cx, L.client.cy - 18], to: [b.cx, b.y], rate: f.rps, color: css("--" + f.name) });
+      out.edges.push({ key: n.node + ">c>" + f.name, from: [b.cx, b.y - 30], to: [b.cx, b.y], rate: f.rps, color: css("--" + f.name) });
       out.edges.push({ key: n.node + ">" + f.name, from: [b.cx, b.y + b.h], to: [L.coord.cx, L.coord.y], rate: f.rps, color: css("--" + f.name) });
     }
     out.edges.push({ key: n.node + ">replica", from: [L.coord.cx, L.coord.y + L.coord.h], to: [L.replica.cx, L.replica.y], rate: n.reads + n.writes, color: css("--accent") });
@@ -291,7 +315,18 @@ function drawNode(L) {
   label(n.node, L.frame.x + 12, L.frame.y + 18, n.up ? css("--text") : css("--bad"), 12, 600, "left");
   if (!n.up) { label("unreachable", L.frame.cx, L.frame.cy, css("--bad"), 14, 600); return; }
   label(`CPU ${n.system.util.toFixed(0)}% · ${bytes(n.system.memory)} · ${fmt(n.keys)} keys`, L.frame.x + L.frame.w - 12, L.frame.y + 18, css("--muted"), 11, 400, "right");
-  label("clients", L.client.cx, L.client.cy - 22, css("--muted"), 11, 400);
+  label("clients", L.frame.x + 12, (L.fronts[0] ? L.fronts[0].b.y : 60) - 26, css("--muted"), 11, 400, "left");
+  for (const d of L.dots) {
+    const color = css("--" + d.f.name);
+    if (d.more) { label("+" + d.more, d.x, d.y, color, 10, 600); continue; }
+    const fb = L.fronts.find((x) => x.f === d.f).b;
+    ctx.strokeStyle = color + "88"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(d.x, d.y + 5); ctx.lineTo(fb.cx, fb.y); ctx.stroke();
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 400 + d.x);
+    ctx.shadowColor = color; ctx.shadowBlur = 4 + 6 * pulse;
+    ctx.fillStyle = color; ctx.beginPath(); ctx.arc(d.x, d.y, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
 
   for (const { f, b } of L.fronts) {
     const color = css("--" + f.name);
@@ -331,6 +366,25 @@ function drawNode(L) {
   const sb = L.shards[0] && L.shards[0].b;
   if (sb) label(`shards (${n.engine})`, L.frame.cx, sb.y + sb.h + 18, css("--muted"), 11, 400);
 }
+
+// Hovering a client dot names it.
+canvas.addEventListener("mousemove", (ev) => {
+  const r = canvas.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const tip = document.getElementById("tip");
+  for (const L of Object.values(layout.nodes)) {
+    for (const d of L.dots || []) {
+      if (!d.more && Math.hypot(d.x - x, d.y - y) < 9) {
+        const c = d.c;
+        tip.innerHTML = `<b>${esc(c.app || LABEL[c.frontend] + " client")}</b>${esc(c.peer)}${c.user ? " · " + esc(c.user) : ""}<br>${fmt(c.requests)} requests · connected ${dur(Math.max(0, Math.round(Date.now() / 1000 - c.since)))}`;
+        tip.style.display = "block"; tip.style.left = ev.clientX + 14 + "px"; tip.style.top = ev.clientY + 14 + "px";
+        return;
+      }
+    }
+  }
+  tip.style.display = "none";
+});
+canvas.addEventListener("mouseleave", () => { document.getElementById("tip").style.display = "none"; });
 
 resize();
 poll();

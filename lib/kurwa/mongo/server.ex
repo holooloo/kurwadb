@@ -16,7 +16,8 @@ defmodule Kurwa.Mongo.Server do
   require Logger
 
   @impl ThousandIsland.Handler
-  def handle_connection(_socket, _state) do
+  def handle_connection(socket, _state) do
+    Kurwa.Metrics.connect(:mongo, socket)
     id = System.unique_integer([:positive]) |> rem(2_000_000_000)
     {:continue, %{buffer: <<>>, session: Commands.session(id)}}
   end

@@ -73,6 +73,7 @@ defmodule Kurwa.Mongo.Commands do
   # -------------------------------------------------------------- handshake
 
   defp dispatch(hello, command, _db, s) when hello in ~w(hello isMaster ismaster) do
+    identify(Bson.get(command, "client"))
     primary = if hello == "hello", do: "isWritablePrimary", else: "ismaster"
 
     mechs =
@@ -640,6 +641,25 @@ defmodule Kurwa.Mongo.Commands do
     do: {:doc, [{"ok", 0.0}, {"errmsg", message}, {"code", code}, {"codeName", name}]}
 
   defp fail(code, name, message), do: throw({:mongo_error, code, name, message})
+
+  # The client metadata a driver sends with its first hello: an application
+  # name if the code set one, else the driver's.
+  defp identify({:doc, _} = client) do
+    app =
+      with {:doc, _} = application <- Bson.get(client, "application"),
+           name when is_binary(name) <- Bson.get(application, "name") do
+        name
+      else
+        _ ->
+          with {:doc, _} = driver <- Bson.get(client, "driver") do
+            "#{Bson.get(driver, "name")} #{Bson.get(driver, "version")}"
+          end
+      end
+
+    Kurwa.Metrics.identify(app: app)
+  end
+
+  defp identify(_), do: :ok
 
   defp token, do: to_string(Kurwa.Config.auth_token())
 

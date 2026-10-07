@@ -4,7 +4,7 @@ defmodule Kurwa.Gateway.Auth do
 
   Off unless `:auth_token` is configured (`KURWA_AUTH_TOKEN`). `/health` stays
   open so load balancers do not need the secret, and so is the dashboard: it
-  shows rates and sizes, never a key or a set name.
+  shows rates, sizes and who is connected, never a key or a set name.
   """
 
   @behaviour Plug

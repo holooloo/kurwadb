@@ -322,8 +322,10 @@ defmodule Kurwa.Resp.Commands do
     end
   end
 
-  defp hello_options([opt, name | rest], s) when opt in ~w(SETNAME setname),
-    do: hello_options(rest, %{s | name: name})
+  defp hello_options([opt, name | rest], s) when opt in ~w(SETNAME setname) do
+    Kurwa.Metrics.identify(app: name)
+    hello_options(rest, %{s | name: name})
+  end
 
   defp hello_options(_other, _s), do: fail("ERR Syntax error in HELLO option")
 
@@ -341,7 +343,11 @@ defmodule Kurwa.Resp.Commands do
     end
   end
 
-  defp client("SETNAME", [name], s), do: {{:simple, "OK"}, %{s | name: name}}
+  defp client("SETNAME", [name], s) do
+    Kurwa.Metrics.identify(app: name)
+    {{:simple, "OK"}, %{s | name: name}}
+  end
+
   defp client("GETNAME", [], s), do: {s.name, s}
   defp client("ID", [], s), do: {s.id, s}
   defp client("SETINFO", [_attr, _value], s), do: {{:simple, "OK"}, s}

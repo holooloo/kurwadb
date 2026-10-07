@@ -103,9 +103,14 @@ coordinator, replica layer and shards, with requests drawn moving between
 them - from clients into a frontend, down to the shards, and across to the
 other replicas - along with requests per second, errors and latency per
 protocol, open connections, scheduler load, memory and keys per shard.
-It polls `/dashboard/state` once a second, which asks every member for its
-`Kurwa.Metrics` snapshot. Both are open without the token: they carry rates
-and sizes, never a key or a set name.
+Every open connection is listed - protocol, client address, the application
+it named (`application_name` in PostgreSQL, the LOGIN7 app name in SQL Server,
+the driver's metadata in MongoDB, `CLIENT SETNAME` in Redis), user, how long
+and how many requests - and drawn as a dot above its frontend. It polls
+`/dashboard/state` once a second, which asks every member for its
+`Kurwa.Metrics` snapshot. Both are open without the token: they carry rates,
+sizes and who is connected, never a key or a set name. Behind Docker's port
+forwarding the client address is the bridge's, not the client's.
 
 ## HTTP API
 

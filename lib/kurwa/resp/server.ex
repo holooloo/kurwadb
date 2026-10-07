@@ -18,8 +18,10 @@ defmodule Kurwa.Resp.Server do
   require Logger
 
   @impl ThousandIsland.Handler
-  def handle_connection(_socket, _state),
-    do: {:continue, %{buffer: <<>>, session: Commands.session()}}
+  def handle_connection(socket, _state) do
+    Kurwa.Metrics.connect(:resp, socket)
+    {:continue, %{buffer: <<>>, session: Commands.session()}}
+  end
 
   @impl ThousandIsland.Handler
   def handle_data(data, socket, state) do

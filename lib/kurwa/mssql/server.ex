@@ -43,6 +43,7 @@ defmodule Kurwa.Mssql.Server do
 
   @impl ThousandIsland.Handler
   def handle_connection(socket, state) do
+    Kurwa.Metrics.connect(:mssql, socket)
     raw = socket.socket
     :inet.setopts(raw, active: false)
 
@@ -197,6 +198,7 @@ defmodule Kurwa.Mssql.Server do
   end
 
   defp session(login) do
+    Kurwa.Metrics.identify(user: login.user, app: login.app)
     spid = 51 + rem(System.unique_integer([:positive]), 30_000)
 
     %{

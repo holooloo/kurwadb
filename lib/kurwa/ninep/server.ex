@@ -31,7 +31,8 @@ defmodule Kurwa.NineP.Server do
   @rread_overhead 11
 
   @impl ThousandIsland.Handler
-  def handle_connection(_socket, _state) do
+  def handle_connection(socket, _state) do
+    Kurwa.Metrics.connect(:ninep, socket)
     {:continue, fresh(@max_msize)}
   end
 

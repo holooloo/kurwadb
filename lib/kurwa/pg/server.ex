@@ -38,7 +38,9 @@ defmodule Kurwa.Pg.Server do
                server_version session_authorization)
 
   @impl ThousandIsland.Handler
-  def handle_connection(_socket, _state) do
+  def handle_connection(socket, _state) do
+    Kurwa.Metrics.connect(:pg, socket)
+
     {:continue,
      %{
        phase: :startup,
@@ -292,6 +294,7 @@ defmodule Kurwa.Pg.Server do
 
   defp session(params) do
     user = Map.get(params, "user", "kurwadb")
+    Kurwa.Metrics.identify(user: user, app: Map.get(params, "application_name"))
 
     %{
       user: user,
@@ -596,6 +599,7 @@ defmodule Kurwa.Pg.Server do
 
   defp respond({:set, name, value, tag}, _statement, socket, state, _portal) do
     session = %{state.session | settings: Map.put(state.session.settings, name, value)}
+    if name == "application_name", do: Kurwa.Metrics.identify(app: value)
 
     if name in @reported, do: send!(socket, Proto.parameter_status(reported_name(name), value))
     send!(socket, Proto.command_complete(tag))

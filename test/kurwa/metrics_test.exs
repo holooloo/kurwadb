@@ -27,6 +27,30 @@ defmodule Kurwa.MetricsTest do
     assert {:ok, _} = Jason.encode(snapshot)
   end
 
+  test "an open connection is listed as a client, named as it named itself" do
+    {:ok, server} = ThousandIsland.start_link(port: 0, handler_module: Kurwa.Pg.Server)
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(server)
+
+    {socket, _} =
+      Kurwa.PgClient.connect(port, user: "alice", params: [{"application_name", "metrics-test"}])
+
+    Kurwa.PgClient.query(socket, "SELECT 1")
+
+    client =
+      eventually(fn ->
+        Enum.find(Kurwa.Metrics.snapshot().clients, &(&1.app == "metrics-test"))
+      end)
+
+    assert %{frontend: :pg, user: "alice", requests: 1} = client
+    assert client.peer =~ "127.0.0.1:"
+
+    :gen_tcp.close(socket)
+
+    eventually(fn ->
+      not Enum.any?(Kurwa.Metrics.snapshot().clients, &(&1.app == "metrics-test"))
+    end)
+  end
+
   test "the dashboard page is compiled in" do
     assert Kurwa.Gateway.Dashboard.html() =~ "/dashboard/state"
   end

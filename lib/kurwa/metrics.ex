@@ -25,7 +25,50 @@ defmodule Kurwa.Metrics do
   @per_frontend 3
   @coordinator [:reads, :writes]
   @peers :kurwa_metrics_peers
+  @clients :kurwa_metrics_clients
   @history 120
+
+  # ----------------------------------------------------------------- clients
+
+  @doc """
+  Records the calling process as a client connection on `frontend`, until it
+  exits. Call from the connection's own process.
+  """
+  def connect(frontend, socket) do
+    peer =
+      case ThousandIsland.Socket.peername(socket) do
+        {:ok, {ip, port}} -> "#{:inet.ntoa(ip)}:#{port}"
+        _ -> "?"
+      end
+
+    :ets.insert(@clients, {self(), frontend, peer, System.system_time(:second), nil, nil, 0})
+    GenServer.cast(__MODULE__, {:monitor, self()})
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  @doc "Names the calling connection: `user:` and `app:` (the client application)."
+  def identify(fields) do
+    updates =
+      for {key, pos} <- [user: 5, app: 6],
+          value = Keyword.get(fields, key),
+          value not in [nil, ""],
+          do: {pos, to_string(value)}
+
+    if updates != [], do: :ets.update_element(@clients, self(), updates)
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp count_client do
+    :ets.update_counter(@clients, self(), {7, 1})
+  rescue
+    _ -> :ok
+  end
 
   # ---------------------------------------------------------------- counting
 
@@ -37,6 +80,7 @@ defmodule Kurwa.Metrics do
 
       ref ->
         base = frontend_base(frontend)
+        count_client()
         :counters.add(ref, base + 1, 1)
         :counters.add(ref, base + 3, System.monotonic_time() - started)
     end
@@ -139,6 +183,7 @@ defmodule Kurwa.Metrics do
     ref = :counters.new(size(), [:write_concurrency])
     :persistent_term.put({__MODULE__, :ref}, ref)
     :ets.new(@peers, [:set, :public, :named_table, write_concurrency: true])
+    :ets.new(@clients, [:set, :public, :named_table, write_concurrency: true])
     :erlang.system_flag(:scheduler_wall_time, true)
     Process.send_after(self(), :sample, 1_000)
 
@@ -182,7 +227,18 @@ defmodule Kurwa.Metrics do
      %{state | previous: counts, previous_at: now, wall: wall, current: current, history: history}}
   end
 
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    :ets.delete(@clients, pid)
+    {:noreply, state}
+  end
+
   def handle_info(_other, state), do: {:noreply, state}
+
+  @impl true
+  def handle_cast({:monitor, pid}, state) do
+    Process.monitor(pid)
+    {:noreply, state}
+  end
 
   @impl true
   def handle_call(:snapshot, _from, state), do: {:reply, build(state), state}
@@ -286,8 +342,19 @@ defmodule Kurwa.Metrics do
         memory_ets: memory[:ets],
         memory_binary: memory[:binary]
       },
+      clients: clients(),
       history: state.history
     }
+  end
+
+  defp clients do
+    @clients
+    |> :ets.tab2list()
+    |> Enum.sort_by(fn {_, frontend, _, since, _, _, _} -> {frontend, since} end)
+    |> Enum.take(200)
+    |> Enum.map(fn {_pid, frontend, peer, since, user, app, requests} ->
+      %{frontend: frontend, peer: peer, since: since, user: user, app: app, requests: requests}
+    end)
   end
 
   defp shards(rates) do
@@ -365,6 +432,7 @@ defmodule Kurwa.Metrics do
     |> Enum.flat_map(fn
       {id, pid, _, _} when is_pid(pid) and is_map_key(@ids, id) -> [{@ids[id], pid}]
       {{ThousandIsland, _}, pid, _, _} when is_pid(pid) -> [{:http, pid}]
+      {{Bandit, _}, pid, _, _} when is_pid(pid) -> [{:http, pid}]
       {Bandit, pid, _, _} when is_pid(pid) -> [{:http, pid}]
       {ThousandIsland, pid, _, _} when is_pid(pid) -> [{:http, pid}]
       _ -> []

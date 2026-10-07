@@ -35,6 +35,7 @@ defmodule Kurwa.Mysql.Server do
 
   @impl ThousandIsland.Handler
   def handle_connection(socket, _state) do
+    Kurwa.Metrics.connect(:mysql, socket)
     id = System.unique_integer([:positive]) |> rem(2_000_000_000)
     nonce = Auth.nonce()
     {out, _} = Proto.frame([Proto.handshake(@server_version, id, nonce, @plugin)], 0)
@@ -146,6 +147,8 @@ defmodule Kurwa.Mysql.Server do
   end
 
   defp session(state, response) do
+    Kurwa.Metrics.identify(user: response.user)
+
     %{
       user: response.user,
       database: @database,
