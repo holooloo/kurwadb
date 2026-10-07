@@ -43,6 +43,24 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
 #status { color: var(--muted); font-size: 12px; margin-left: auto; }
 #tip { position: fixed; pointer-events: none; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: none; z-index: 5; max-width: 320px; }
 #tip b { display: block; margin-bottom: 2px; }
+#help-open { width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-weight: 700; cursor: pointer; font-size: 15px; }
+#help-open:hover { border-color: var(--accent); color: var(--accent); }
+#help { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 10; display: flex; justify-content: center; align-items: flex-start; padding: 40px 16px; overflow-y: auto; }
+#help[hidden] { display: none; }
+.sheet { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; max-width: 920px; width: 100%; padding: 18px 20px 24px; }
+.sheet-head { display: flex; justify-content: space-between; align-items: center; }
+.sheet-head h2 { font-size: 18px; margin: 0; text-transform: none; letter-spacing: 0; color: var(--text); }
+#help-close { background: none; border: 0; color: var(--muted); font-size: 26px; cursor: pointer; line-height: 1; }
+.proto { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+.proto h3 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.proto h3 i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.proto p { margin: 4px 0 8px; color: var(--muted); font-size: 13px; }
+.addrs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.addrs span { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; font: 12px ui-monospace, Menlo, monospace; }
+.code { position: relative; margin: 6px 0; }
+.code pre { margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 70px 10px 12px; font: 12.5px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; }
+.code button { position: absolute; top: 6px; right: 6px; font-size: 11px; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.note { background: var(--panel2); border-radius: 8px; padding: 10px 12px; color: var(--muted); font-size: 13px; margin-top: 10px; }
 td.app { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 640px) { header { padding: 12px 16px; gap: 14px; } main { padding: 12px 16px; } #topology { height: 1500px; } }
 </style>
@@ -57,7 +75,14 @@ td.app { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
   <div class="stat"><b id="h-quorum">-</b><small>n / r / w</small></div>
   <div class="stat"><b id="h-engine">-</b><small>engine</small></div>
   <div id="status">connecting…</div>
+  <button id="help-open" title="How to connect" aria-label="How to connect">?</button>
 </header>
+<div id="help" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="sheet-head"><h2 id="help-title">Connecting to kurwadb</h2><button id="help-close" aria-label="Close">×</button></div>
+    <div id="help-body"></div>
+  </div>
+</div>
 <div id="tip"></div>
 <main>
   <section class="card">
@@ -173,6 +198,76 @@ function chart(id, series, label, fixedMax) {
   svg.innerHTML = `<line x1="0" x2="${w}" y1="${h - pad}" y2="${h - pad}" stroke="${css("--line")}"/>` + paths +
     `<text x="${w - 4}" y="12" text-anchor="end" fill="${css("--muted")}" font-size="11">max ${label(max)} · now ${last.map(label).join(" / ")}</text>`;
 }
+
+// ------------------------------------------------------------------- help
+// Addresses come from the nodes themselves (KURWA_PUBLIC_HOST/PORTS), so
+// what is shown is what clients can actually reach.
+function endpoints(proto) {
+  return state.nodes.filter((n) => n.up).map((n) => {
+    const f = n.frontends.find((x) => x.name === proto);
+    if (!f) return null;
+    const addr = f.public && !f.public.startsWith(":") ? f.public : location.hostname + ":" + (f.public ? f.public.slice(1) : f.port);
+    const [host, port] = [addr.replace(/:\d+$/, ""), addr.replace(/^.*:/, "")];
+    return { node: n.node, host, port };
+  }).filter(Boolean);
+}
+
+function code(text) {
+  return `<div class="code"><pre>${esc(text)}</pre><button data-copy="${esc(text)}">copy</button></div>`;
+}
+
+function renderHelp() {
+  const auth = state.auth || {};
+  const pw = auth.password || (auth.required ? "<password>" : "any");
+  const first = (p) => endpoints(p)[0] || { host: location.hostname, port: "?" };
+  const section = (proto, intro, examples) => {
+    const eps = endpoints(proto);
+    if (!eps.length) return "";
+    const e = eps[0];
+    return `<div class="proto"><h3><i style="background:var(--${proto})"></i>${LABEL[proto]}</h3><p>${intro}</p>
+      <div class="addrs">${eps.map((x) => `<span>${esc(short(x.node))} → ${esc(x.host)}:${esc(x.port)}</span>`).join("")}</div>
+      ${examples(e.host, e.port).map(code).join("")}</div>`;
+  };
+  const pg = first("pg");
+  document.getElementById("help-body").innerHTML = `
+    <p class="note">Any node serves any request: pick any address below, or spread clients over all of them.
+    One password for every protocol, <b>any user name</b>. Database <code>kurwadb</code>.
+    A table is a set with one column, <code>key text</code>; <code>CREATE SCHEMA s</code> then <code>s.t</code> is the set <code>s.t</code>.
+    ${auth.password ? "" : auth.required ? "The password is not shown here (KURWA_DASHBOARD_SHOW_PASSWORD=1 shows it): it is KURWA_AUTH_TOKEN in deploy/.env." : "No password is set: any password works."}</p>
+    ${section("pg", "psql, DBeaver, DataGrip, any PostgreSQL driver. SCRAM-SHA-256.", (h, p) => [
+      `psql "host=${h} port=${p} dbname=kurwadb user=kurwa password=${pw}"`,
+      `postgresql://kurwa:${encodeURIComponent(pw)}@${h}:${p}/kurwadb`,
+      `jdbc:postgresql://${h}:${p}/kurwadb   (user: any, password: ${pw})`])}
+    ${section("mssql", "SSMS, sqlcmd, ODBC/JDBC/tedious. SQL Server Authentication; the certificate is self-signed, so trust it.", (h, p) => [
+      `Server name: ${h},${p}   Authentication: SQL Server   Login: sa   Password: ${pw}   Encrypt: Mandatory, Trust server certificate`,
+      `sqlcmd -S ${h},${p} -U sa -P '${pw}' -C -d kurwadb`,
+      `Server=${h},${p};Database=kurwadb;User Id=sa;Password=${pw};Encrypt=True;TrustServerCertificate=True`])}
+    ${section("mysql", "mysql, MariaDB clients, Workbench, any MySQL driver.", (h, p) => [
+      `mysql -h ${h} -P ${p} -u kurwa -p'${pw}' kurwadb`,
+      `mysql://kurwa:${encodeURIComponent(pw)}@${h}:${p}/kurwadb`])}
+    ${section("resp", "redis-cli and Redis clients: SET/SETNX/EXISTS/DEL, SADD/SISMEMBER/SREM on sets.", (h, p) => [
+      `redis-cli -h ${h} -p ${p} -a '${pw}'`,
+      `redis://:${encodeURIComponent(pw)}@${h}:${p}`])}
+    ${section("mongo", "mongosh, Compass, any MongoDB driver: a collection is a set, _id is the key.", (h, p) => [
+      `mongosh "mongodb://kurwa:${encodeURIComponent(pw)}@${h}:${p}/kurwadb?authSource=admin&authMechanism=SCRAM-SHA-256&directConnection=true"`])}
+    ${section("http", "The HTTP API. This dashboard is on every node at /dashboard.", (h, p) => [
+      `curl -X PUT -H "Authorization: Bearer ${pw}" http://${h}:${p}/k/order:1`,
+      `curl -i -H "Authorization: Bearer ${pw}" http://${h}:${p}/k/order:1     # 200 member, 404 not`,
+      `curl -X PUT -H "Authorization: Bearer ${pw}" http://${h}:${p}/sets/seen/k/order:1`])}`;
+}
+
+document.getElementById("help-open").addEventListener("click", () => { renderHelp(); document.getElementById("help").hidden = false; });
+document.getElementById("help-close").addEventListener("click", () => { document.getElementById("help").hidden = true; });
+document.getElementById("help").addEventListener("click", (e) => {
+  if (e.target.id === "help") e.currentTarget.hidden = true;
+  const text = e.target.dataset && e.target.dataset.copy;
+  if (text !== undefined) {
+    const done = () => { e.target.textContent = "copied"; setTimeout(() => (e.target.textContent = "copy"), 1200); };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done);
+    else { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); done(); }
+  }
+});
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") document.getElementById("help").hidden = true; });
 
 // --------------------------------------------------------------- topology
 const canvas = document.getElementById("topology");

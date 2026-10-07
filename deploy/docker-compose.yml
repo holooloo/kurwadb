@@ -25,6 +25,9 @@ x-node: &node
     KURWA_LOG_LEVEL: ${KURWA_LOG_LEVEL:-notice}
     # The address clients use, for the dashboard to show.
     KURWA_PUBLIC_HOST: ${KURWA_PUBLIC_HOST:-}
+    # 1 puts the password in the dashboard's connection help, for anyone who
+    # can open the page.
+    KURWA_DASHBOARD_SHOW_PASSWORD: ${KURWA_DASHBOARD_SHOW_PASSWORD:-0}
   volumes:
     - ./procedures:/procedures:ro
 

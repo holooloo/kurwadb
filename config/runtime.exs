@@ -63,6 +63,9 @@ if config_env() != :test do
     # address and ports (a container's published ports): shown on the
     # dashboard. KURWA_PUBLIC_PORTS is "pg=25432,mssql=1433,...".
     public_host: System.get_env("KURWA_PUBLIC_HOST"),
+    # The dashboard's connection help shows the password only when this is on:
+    # the page itself needs no password, so anyone who can open it sees it.
+    dashboard_show_password: System.get_env("KURWA_DASHBOARD_SHOW_PASSWORD") in ~w(1 true),
     public_ports:
       System.get_env("KURWA_PUBLIC_PORTS", "")
       |> String.split(",", trim: true)

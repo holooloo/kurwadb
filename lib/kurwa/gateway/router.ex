@@ -210,7 +210,14 @@ defmodule Kurwa.Gateway.Router do
   end
 
   get "/dashboard/state" do
-    json(conn, 200, %{nodes: Kurwa.Metrics.cluster(), at: System.system_time(:millisecond)})
+    password =
+      if Config.get(:dashboard_show_password), do: Config.auth_token(), else: nil
+
+    json(conn, 200, %{
+      nodes: Kurwa.Metrics.cluster(),
+      at: System.system_time(:millisecond),
+      auth: %{required: Config.auth_token() != nil, password: password}
+    })
   end
 
   get "/health" do
