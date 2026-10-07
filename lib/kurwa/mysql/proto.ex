@@ -152,7 +152,10 @@ defmodule Kurwa.Mysql.Proto do
   def eof(status, warnings \\ 0), do: [0xFE, <<warnings::16-little, status::16-little>>]
 
   @doc "ERR packet."
-  def err(code, sqlstate, message), do: [0xFF, <<code::16-little>>, ?#, sqlstate, message]
+  def err(code, sqlstate, message) do
+    Kurwa.Metrics.error(:mysql)
+    [0xFF, <<code::16-little>>, ?#, sqlstate, message]
+  end
 
   @doc "Column Definition 41 for `{name, type}`."
   def column(name, type) do

@@ -126,7 +126,8 @@ defmodule Kurwa.Mysql.Server do
   defp packet(payload, _seq, %{phase: {:switch, plugin}} = state),
     do: authenticate(plugin, payload, state)
 
-  defp packet(payload, _seq, %{phase: :command} = state), do: command(payload, state)
+  defp packet(payload, _seq, %{phase: :command} = state),
+    do: Kurwa.Metrics.measure(:mysql, fn -> command(payload, state) end)
 
   defp authenticate(plugin, response, state) do
     if Auth.valid?(plugin, response, state.nonce, to_string(Kurwa.Config.auth_token())) do

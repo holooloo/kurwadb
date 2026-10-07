@@ -70,7 +70,10 @@ defmodule Kurwa.Coordinator do
   Same options as `add/2`, `ttl:` included.
   """
   @spec add_new(Record.key(), keyword()) :: :ok | :exists | error()
-  def add_new(key, opts \\ []) when is_binary(key), do: add_new(key, opts, 2, nil)
+  def add_new(key, opts \\ []) when is_binary(key) do
+    Kurwa.Metrics.coordinator(:writes)
+    add_new(key, opts, 2, nil)
+  end
 
   # `previous` is this call's own first attempt, which a retry must not mistake
   # for somebody else's key.
@@ -150,6 +153,8 @@ defmodule Kurwa.Coordinator do
   """
   @spec lookup(Record.key(), keyword()) :: {:ok, Record.t() | nil} | error()
   def lookup(key, opts \\ []) when is_binary(key) do
+    Kurwa.Metrics.coordinator(:reads)
+
     with {:ok, placement} <- placement(key, opts) do
       timeout = Keyword.get(opts, :timeout, Config.request_timeout())
       targets = placement.up
@@ -209,7 +214,10 @@ defmodule Kurwa.Coordinator do
   # So the replies are checked. If the winner is not our record, the clock is
   # raised past it and the write goes again, once - which is what it would have
   # been stamped with had this node heard of that version first.
-  defp write(key, alive?, opts), do: write(key, alive?, opts, 2)
+  defp write(key, alive?, opts) do
+    Kurwa.Metrics.coordinator(:writes)
+    write(key, alive?, opts, 2)
+  end
 
   defp write(key, alive?, opts, attempts) do
     with {:ok, placement} <- placement(key, opts) do

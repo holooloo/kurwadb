@@ -28,10 +28,21 @@ defmodule Kurwa.Mongo.Server do
     result
   end
 
+  defp run(command, session) do
+    Kurwa.Metrics.measure(:mongo, fn ->
+      {reply, _} = result = Commands.run(command, session)
+
+      if match?({:doc, [{"ok", 0} | _]}, reply) or match?({:doc, [{"ok", +0.0} | _]}, reply),
+        do: Kurwa.Metrics.error(:mongo)
+
+      result
+    end)
+  end
+
   defp loop(buffer, state, out) do
     case Wire.decode(buffer) do
       {:ok, {:msg, request_id, command, more_to_come?}, rest} ->
-        {reply, session} = Commands.run(command, state.session)
+        {reply, session} = run(command, state.session)
         out = if more_to_come?, do: out, else: [out, Wire.reply_msg(request_id, reply)]
         loop(rest, %{state | session: session}, out)
 
@@ -39,7 +50,7 @@ defmodule Kurwa.Mongo.Server do
       # still send their first hello. The database is in the namespace.
       {:ok, {:query, request_id, collection, {:doc, pairs}}, rest} ->
         db = collection |> String.split(".", parts: 2) |> hd()
-        {reply, session} = Commands.run({:doc, pairs ++ [{"$db", db}]}, state.session)
+        {reply, session} = run({:doc, pairs ++ [{"$db", db}]}, state.session)
         loop(rest, %{state | session: session}, [out, Wire.reply_query(request_id, reply)])
 
       {:ok, {:unsupported, request_id, opcode}, rest} ->

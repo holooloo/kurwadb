@@ -236,12 +236,22 @@ defmodule Kurwa.Mssql.Server do
         {_descriptor, text} = Tds.all_headers(payload)
         sql = Tds.utf8(text)
         Logger.debug("kurwadb mssql batch: #{sql}")
-        {tokens, session} = guarded(sql, session, fn -> batch(sql, %{}, session, :done) end)
+
+        {tokens, session} =
+          Kurwa.Metrics.measure(:mssql, fn ->
+            guarded(sql, session, fn -> batch(sql, %{}, session, :done) end)
+          end)
+
         conn |> send_message(:reply, tokens) |> commands(session)
 
       {:ok, :rpc, payload, conn} ->
         Logger.debug("kurwadb mssql rpc: #{Base.encode16(payload)}")
-        {tokens, session} = guarded("RPC", session, fn -> rpcs(payload, session) end)
+
+        {tokens, session} =
+          Kurwa.Metrics.measure(:mssql, fn ->
+            guarded("RPC", session, fn -> rpcs(payload, session) end)
+          end)
+
         conn |> send_message(:reply, tokens) |> commands(session)
 
       {:ok, :transaction_manager, payload, conn} ->
@@ -721,6 +731,8 @@ defmodule Kurwa.Mssql.Server do
   # SQLSTATE from the executor, as the SQL Server message number and class a
   # client expects for the same failure.
   defp error(sqlstate, message) do
+    Kurwa.Metrics.error(:mssql)
+
     {number, class} =
       case sqlstate do
         "42601" -> {102, 15}

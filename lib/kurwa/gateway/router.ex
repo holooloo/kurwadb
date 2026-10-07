@@ -19,6 +19,8 @@ defmodule Kurwa.Gateway.Router do
       GET    /count                 approximate live keys
       GET    /info                  ring, quorum settings, local and cache stats
       GET    /health                liveness (never authenticated)
+      GET    /dashboard             live dashboard of the cluster (never authenticated)
+      GET    /dashboard/state       what it draws, as JSON
 
   Keys are URL path segments, so a key containing `/` must be percent-encoded.
   For keys that are not valid UTF-8, send them base64url-encoded and add
@@ -36,6 +38,7 @@ defmodule Kurwa.Gateway.Router do
 
   @max_batch 1_000
 
+  plug(:measure)
   plug(:match)
   plug(Kurwa.Gateway.Auth)
 
@@ -200,10 +203,34 @@ defmodule Kurwa.Gateway.Router do
     })
   end
 
+  get "/dashboard" do
+    conn
+    |> put_resp_content_type("text/html")
+    |> send_resp(200, Kurwa.Gateway.Dashboard.html())
+  end
+
+  get "/dashboard/state" do
+    json(conn, 200, %{nodes: Kurwa.Metrics.cluster(), at: System.system_time(:millisecond)})
+  end
+
   get "/health" do
     members = Kurwa.Cluster.members()
     healthy? = length(members) >= 1
     json(conn, if(healthy?, do: 200, else: 503), %{status: "ok", members: length(members)})
+  end
+
+  # Every API request counts towards the HTTP frontend's rate - the
+  # dashboard's own polling does not.
+  defp measure(%{request_path: "/dashboard" <> _} = conn, _opts), do: conn
+
+  defp measure(conn, _opts) do
+    started = System.monotonic_time()
+
+    register_before_send(conn, fn conn ->
+      Kurwa.Metrics.request(:http, started)
+      if conn.status >= 500, do: Kurwa.Metrics.error(:http)
+      conn
+    end)
   end
 
   match _ do

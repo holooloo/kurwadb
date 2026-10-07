@@ -3,14 +3,15 @@ defmodule Kurwa.Gateway.Auth do
   Optional shared-secret gate in front of the HTTP API.
 
   Off unless `:auth_token` is configured (`KURWA_AUTH_TOKEN`). `/health` stays
-  open so load balancers do not need the secret.
+  open so load balancers do not need the secret, and so is the dashboard: it
+  shows rates and sizes, never a key or a set name.
   """
 
   @behaviour Plug
 
   import Plug.Conn
 
-  @public ["/health"]
+  @public ["/health", "/dashboard", "/dashboard/state"]
 
   @impl true
   def init(opts), do: opts

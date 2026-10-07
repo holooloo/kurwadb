@@ -28,13 +28,21 @@ defmodule Kurwa.Resp.Server do
     result
   end
 
+  defp measure_resp(request, session) do
+    Kurwa.Metrics.measure(:resp, fn ->
+      result = Commands.run(request, session)
+      if match?({{:error, _}, _}, result), do: Kurwa.Metrics.error(:resp)
+      result
+    end)
+  end
+
   defp loop(buffer, state, out) do
     case Proto.decode(buffer) do
       {:ok, [], rest} ->
         loop(rest, state, out)
 
       {:ok, request, rest} ->
-        case Commands.run(request, state.session) do
+        case measure_resp(request, state.session) do
           {:close, reply, _session} ->
             {{:close, state}, [out, Proto.encode(reply, state.session.proto)]}
 

@@ -35,6 +35,7 @@ COPY native native
 COPY lib lib
 COPY test test
 COPY examples examples
+COPY priv/dashboard priv/dashboard
 
 # --------------------------------------------------------------- release
 FROM base AS release

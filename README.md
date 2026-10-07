@@ -78,13 +78,15 @@ curl      localhost:4040/info
 
 ### Docker
 
-One node with every frontend on, the on-disk engine, data on a volume and the
-procedures from `deploy/procedures`:
+`deploy/` runs a three-node cluster (n=3, r=2, w=2) with every frontend on,
+the on-disk engine, a volume per node and the procedures from
+`deploy/procedures`. Only the first node is published:
 
 ```sh
 cd deploy
-cp .env.example .env             # set KURWA_AUTH_TOKEN; move ports if taken
+cp .env.example .env             # set KURWA_AUTH_TOKEN and KURWA_COOKIE; move ports if taken
 docker compose up -d --build
+docker compose --profile demo up -d   # optional: steady traffic to watch
 ```
 
 The token is the password for every protocol, with any user name. Host ports
@@ -92,7 +94,18 @@ default to 1433 for SQL Server and the 2xxxx range for the rest, out of the
 way of a developer machine's own databases. `docker build --target test .`
 runs the suite against both engines inside the build, Rust NIF included, and
 `deploy/smoke.sh HOST` runs every driver check in `test/drivers` against a
-running container over the network.
+running cluster over the network.
+
+### Dashboard
+
+Every node serves `/dashboard` on its HTTP port: each node's frontends,
+coordinator, replica layer and shards, with requests drawn moving between
+them - from clients into a frontend, down to the shards, and across to the
+other replicas - along with requests per second, errors and latency per
+protocol, open connections, scheduler load, memory and keys per shard.
+It polls `/dashboard/state` once a second, which asks every member for its
+`Kurwa.Metrics` snapshot. Both are open without the token: they carry rates
+and sizes, never a key or a set name.
 
 ## HTTP API
 

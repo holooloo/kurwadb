@@ -21,6 +21,8 @@ client = pymongo.MongoClient(uri, serverSelectionTimeoutMS=5000)
 check("ping", client.admin.command("ping")["ok"], 1.0)
 db = client.kurwadb
 seen = db["pyseen"]
+# What an earlier run left behind: the store keeps it.
+seen.delete_many({"_id": {"$in": ["a", "b", "c", "d", "e", "f", "job:1", "ttl"]}})
 
 check("insert_many", len(seen.insert_many([{"_id": "a"}, {"_id": "b"}]).inserted_ids), 2)
 check("find $in", list(seen.find({"_id": {"$in": ["a", "zz"]}})), [{"_id": "a"}])

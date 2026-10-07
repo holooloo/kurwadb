@@ -45,14 +45,18 @@ defmodule Kurwa.Store do
   @doc "Merges `record` into the local copy."
   @spec put(Record.t()) :: {:ok, Record.t()} | {:stale, Record.t()} | {:error, term()}
   def put(record) do
-    record |> Record.key() |> shard_for() |> Shard.put(record)
+    index = record |> Record.key() |> shard_for()
+    Kurwa.Metrics.shard(index, :put)
+    Shard.put(index, record)
   end
 
   @doc "Writes `record` only if its key is not live here. See `Kurwa.Store.Shard.put_new/3`."
   @spec put_new(Record.t()) ::
           {:ok, Record.t()} | {:exists, Record.t()} | {:stale, Record.t()} | {:error, term()}
   def put_new(record, previous \\ nil) do
-    record |> Record.key() |> shard_for() |> Shard.put_new(record, previous)
+    index = record |> Record.key() |> shard_for()
+    Kurwa.Metrics.shard(index, :put)
+    Shard.put_new(index, record, previous)
   end
 
   @doc """
@@ -65,6 +69,7 @@ defmodule Kurwa.Store do
   @spec get(Record.key()) :: {:ok, Record.t() | nil} | {:error, :unavailable}
   def get(key) when is_binary(key) do
     index = shard_for(key)
+    Kurwa.Metrics.shard(index, :get)
     {:ok, engine().get(handle(index), key)}
   rescue
     ArgumentError -> {:error, :unavailable}
@@ -84,6 +89,10 @@ defmodule Kurwa.Store do
   rescue
     ArgumentError -> 0
   end
+
+  @doc "Live keys in local shard `index`."
+  @spec count(non_neg_integer()) :: non_neg_integer()
+  def count(index), do: engine().count(handle(index))
 
   @doc "Folds over every local record, tombstones included."
   @spec fold(acc, (Record.t(), acc -> acc)) :: acc when acc: term()

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kurwadb dashboard</title>
+<style>
+:root {
+  --bg: #0b0e14; --panel: #121722; --panel2: #171d2b; --line: #263042;
+  --text: #e6e9ef; --muted: #8a93a6; --accent: #7cc4ff; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+  --http: #60a5fa; --pg: #38bdf8; --resp: #f87171; --mysql: #fb923c; --mongo: #4ade80; --mssql: #c084fc; --ninep: #94a3b8;
+  --replica: #facc15; --shard: #2dd4bf;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f5f7fb; --panel: #ffffff; --panel2: #eef2f8; --line: #d7deea; --text: #111827; --muted: #5b6475;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif; }
+header { display: flex; align-items: center; gap: 24px; padding: 14px 20px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .02em; }
+header h1 span { color: var(--accent); }
+.stat { display: flex; flex-direction: column; }
+.stat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.stat small { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot.down { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+main { padding: 16px 20px 32px; display: grid; gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+#topology { width: 100%; height: 560px; display: block; }
+.grid3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+svg.chart { width: 100%; height: 120px; display: block; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.tablewrap { overflow-x: auto; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 8px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.err { color: var(--bad); }
+#status { color: var(--muted); font-size: 12px; margin-left: auto; }
+@media (max-width: 640px) { header { padding: 12px 16px; gap: 14px; } main { padding: 12px 16px; } #topology { height: 720px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>kurwa<span>db</span></h1>
+  <div class="stat"><b id="h-rps">0</b><small>requests / s</small></div>
+  <div class="stat"><b id="h-replica">0</b><small>replica ops / s</small></div>
+  <div class="stat"><b id="h-nodes">-</b><small>nodes up</small></div>
+  <div class="stat"><b id="h-keys">-</b><small>keys (local, summed)</small></div>
+  <div class="stat"><b id="h-quorum">-</b><small>n / r / w</small></div>
+  <div class="stat"><b id="h-engine">-</b><small>engine</small></div>
+  <div id="status">connecting…</div>
+</header>
+<main>
+  <section class="card">
+    <h2>Data flow</h2>
+    <canvas id="topology"></canvas>
+    <div class="legend">
+      <span><i style="background:var(--http)"></i>HTTP</span>
+      <span><i style="background:var(--pg)"></i>PostgreSQL</span>
+      <span><i style="background:var(--resp)"></i>Redis</span>
+      <span><i style="background:var(--mysql)"></i>MySQL</span>
+      <span><i style="background:var(--mongo)"></i>MongoDB</span>
+      <span><i style="background:var(--mssql)"></i>SQL Server</span>
+      <span><i style="background:var(--replica)"></i>replica requests between nodes</span>
+      <span><i style="background:var(--shard)"></i>shard reads / writes</span>
+    </div>
+  </section>
+  <section class="grid3">
+    <div class="card"><h2>Requests / s</h2><svg class="chart" id="c-rps"></svg></div>
+    <div class="card"><h2>Scheduler utilisation %</h2><svg class="chart" id="c-util"></svg></div>
+    <div class="card"><h2>Memory</h2><svg class="chart" id="c-mem"></svg></div>
+  </section>
+  <section class="card">
+    <h2>Frontends</h2>
+    <div class="tablewrap"><table id="t-front"><thead><tr><th>node</th><th>protocol</th><th>port</th><th>connections</th><th>req/s</th><th>errors/s</th><th>avg latency ms</th><th>total</th></tr></thead><tbody></tbody></table></div>
+  </section>
+  <section class="card">
+    <h2>Nodes</h2>
+    <div class="tablewrap"><table id="t-nodes"><thead><tr><th>node</th><th>state</th><th>uptime</th><th>keys</th><th>sets</th><th>reads/s</th><th>writes/s</th><th>CPU %</th><th>run queue</th><th>processes</th><th>memory</th><th>ETS</th><th>hinted handoff</th><th>lamport</th></tr></thead><tbody></tbody></table></div>
+  </section>
+</main>
+<script>
+"use strict";
+const PROTO = ["http", "pg", "resp", "mysql", "mongo", "mssql", "ninep"];
+const LABEL = { http: "HTTP", pg: "PostgreSQL", resp: "Redis", mysql: "MySQL", mongo: "MongoDB", mssql: "SQL Server", ninep: "9P" };
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? (n / 1e3).toFixed(1) + "k" : (Math.round(n * 10) / 10).toString();
+const bytes = (n) => n >= 1 << 30 ? (n / (1 << 30)).toFixed(2) + " GB" : (n / (1 << 20)).toFixed(0) + " MB";
+const dur = (s) => s >= 86400 ? Math.floor(s / 86400) + "d " + Math.floor(s % 86400 / 3600) + "h" : s >= 3600 ? Math.floor(s / 3600) + "h " + Math.floor(s % 3600 / 60) + "m" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+const short = (node) => node.replace(/^kurwa(db)?@/, "").replace(/^(.{14}).+$/, "$1…");
+
+let state = { nodes: [] };
+let shown = {}; // smoothed rates per edge key
+
+// ---------------------------------------------------------------- polling
+async function poll() {
+  try {
+    const r = await fetch("/dashboard/state", { cache: "no-store" });
+    state = await r.json();
+    document.getElementById("status").textContent = "live · " + new Date(state.at).toLocaleTimeString();
+    render();
+  } catch (e) {
+    document.getElementById("status").textContent = "no answer from the node";
+  }
+  setTimeout(poll, 1000);
+}
+
+function render() {
+  const nodes = state.nodes;
+  const up = nodes.filter((n) => n.up);
+  const rps = up.reduce((s, n) => s + n.frontends.reduce((a, f) => a + f.rps, 0), 0);
+  const replica = up.reduce((s, n) => s + n.local_replica + Object.values(n.received).reduce((a, b) => a + b, 0), 0);
+  document.getElementById("h-rps").textContent = fmt(rps);
+  document.getElementById("h-replica").textContent = fmt(replica);
+  document.getElementById("h-nodes").textContent = up.length + " / " + nodes.length;
+  document.getElementById("h-keys").textContent = fmt(up.reduce((s, n) => s + n.keys, 0));
+  if (up[0]) {
+    document.getElementById("h-quorum").textContent = up[0].n + " / " + up[0].r + " / " + up[0].w;
+    document.getElementById("h-engine").textContent = up[0].engine;
+  }
+
+  const fb = document.querySelector("#t-front tbody");
+  fb.innerHTML = up.flatMap((n) => n.frontends.map((f) =>
+    `<tr><td>${short(n.node)}</td><td><i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--${f.name});margin-right:6px"></i>${LABEL[f.name]}</td><td>${f.port}</td><td>${f.connections}</td><td>${fmt(f.rps)}</td><td class="${f.errors > 0 ? "err" : ""}">${fmt(f.errors)}</td><td>${f.latency_ms.toFixed(3)}</td><td>${fmt(f.total)}</td></tr>`)).join("");
+
+  const nb = document.querySelector("#t-nodes tbody");
+  nb.innerHTML = nodes.map((n) => n.up
+    ? `<tr><td>${n.node}</td><td><span class="dot"></span>up</td><td>${dur(n.uptime)}</td><td>${fmt(n.keys)}</td><td>${n.sets}</td><td>${fmt(n.reads)}</td><td>${fmt(n.writes)}</td><td>${n.system.util.toFixed(1)}</td><td>${n.system.run_queue}</td><td>${fmt(n.system.processes)}</td><td>${bytes(n.system.memory)}</td><td>${bytes(n.system.memory_ets)}</td><td>${n.handoff}</td><td>${fmt(n.lamport)}</td></tr>`
+    : `<tr><td>${n.node}</td><td><span class="dot down"></span>down</td><td colspan="12"></td></tr>`).join("");
+
+  chart("c-rps", up.map((n) => n.history.rps), (v) => fmt(v));
+  chart("c-util", up.map((n) => n.history.util), (v) => v.toFixed(0) + "%", 100);
+  chart("c-mem", up.map((n) => n.history.memory), bytes);
+}
+
+const SERIES = ["#7cc4ff", "#facc15", "#4ade80", "#f472b6", "#fb923c", "#c084fc"];
+function chart(id, series, label, fixedMax) {
+  const svg = document.getElementById(id);
+  const w = svg.clientWidth || 300, h = svg.clientHeight || 120, pad = 4;
+  const max = fixedMax || Math.max(1, ...series.flat());
+  const paths = series.map((s, i) => {
+    if (!s.length) return "";
+    const step = (w - pad * 2) / Math.max(1, 119);
+    const off = (120 - s.length) * step;
+    const d = s.map((v, j) => `${j ? "L" : "M"}${(pad + off + j * step).toFixed(1)},${(h - pad - (v / max) * (h - pad * 2 - 14)).toFixed(1)}`).join("");
+    return `<path d="${d}" fill="none" stroke="${SERIES[i % SERIES.length]}" stroke-width="1.6"/>`;
+  }).join("");
+  const last = series.map((s) => s[s.length - 1] || 0);
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = `<line x1="0" x2="${w}" y1="${h - pad}" y2="${h - pad}" stroke="${css("--line")}"/>` + paths +
+    `<text x="${w - 4}" y="12" text-anchor="end" fill="${css("--muted")}" font-size="11">max ${label(max)} · now ${last.map(label).join(" / ")}</text>`;
+}
+
+// --------------------------------------------------------------- topology
+const canvas = document.getElementById("topology");
+const ctx = canvas.getContext("2d");
+let W = 0, H = 0, layout = { nodes: {}, edges: [] };
+let particles = [];
+let last = performance.now();
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = canvas.clientWidth; H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", resize);
+
+function box(x, y, w, h) { return { x, y, w, h, cx: x + w / 2, cy: y + h / 2 }; }
+
+function buildLayout() {
+  const nodes = state.nodes;
+  const k = Math.max(1, nodes.length);
+  const narrow = W < 640;
+  const colW = narrow ? W : W / k;
+  const rows = narrow ? k : 1;
+  const rowH = H / rows;
+  const out = { nodes: {}, edges: [] };
+
+  nodes.forEach((n, i) => {
+    const x0 = narrow ? 0 : i * colW, y0 = narrow ? i * rowH : 0;
+    const pad = 14, innerW = colW - pad * 2;
+    const L = { node: n, frame: box(x0 + pad / 2, y0 + 6, colW - pad, rowH - 12) };
+    const fronts = n.up ? n.frontends : [];
+    const fw = Math.min(110, (innerW - 6 * (fronts.length - 1)) / Math.max(1, fronts.length));
+    const ftotal = fronts.length * fw + (fronts.length - 1) * 6;
+    const fy = y0 + rowH * 0.16;
+    L.client = box(x0 + colW / 2 - 40, y0 + 30, 80, 4);
+    L.fronts = fronts.map((f, j) => ({ f, b: box(x0 + colW / 2 - ftotal / 2 + j * (fw + 6), fy, fw, 46) }));
+    L.coord = box(x0 + colW / 2 - Math.min(200, innerW) / 2, y0 + rowH * 0.40, Math.min(200, innerW), 44);
+    L.replica = box(x0 + colW / 2 - Math.min(200, innerW) / 2, y0 + rowH * 0.58, Math.min(200, innerW), 44);
+    const shards = n.up ? n.shards : [];
+    const sw = Math.min(46, (innerW - 4 * (shards.length - 1)) / Math.max(1, shards.length));
+    const stotal = shards.length * sw + (shards.length - 1) * 4;
+    L.shards = shards.map((s, j) => ({ s, b: box(x0 + colW / 2 - stotal / 2 + j * (sw + 4), y0 + rowH * 0.80, sw, 40) }));
+    out.nodes[n.node] = L;
+
+    if (!n.up) return;
+    for (const { f, b } of L.fronts) {
+      out.edges.push({ key: n.node + ">c>" + f.name, from: [b.cx, L.client.cy - 18], to: [b.cx, b.y], rate: f.rps, color: css("--" + f.name) });
+      out.edges.push({ key: n.node + ">" + f.name, from: [b.cx, b.y + b.h], to: [L.coord.cx, L.coord.y], rate: f.rps, color: css("--" + f.name) });
+    }
+    out.edges.push({ key: n.node + ">replica", from: [L.coord.cx, L.coord.y + L.coord.h], to: [L.replica.cx, L.replica.y], rate: n.reads + n.writes, color: css("--accent") });
+    for (const { s, b } of L.shards) {
+      out.edges.push({ key: n.node + ">s" + s.index, from: [L.replica.cx, L.replica.y + L.replica.h], to: [b.cx, b.y], rate: s.gets + s.puts, color: css("--shard") });
+    }
+  });
+
+  // replica requests between nodes, curved, in the direction they travel
+  for (const n of nodes) {
+    if (!n.up) continue;
+    const a = out.nodes[n.node];
+    for (const [peer, rate] of Object.entries(n.sent)) {
+      const b = out.nodes[peer];
+      if (!b) continue;
+      const dir = b.replica.cx > a.replica.cx ? 1 : -1;
+      const from = [a.replica.cx + dir * a.replica.w / 2, a.replica.cy - 8];
+      const to = [b.replica.cx - dir * b.replica.w / 2, b.replica.cy - 8];
+      const lift = narrow ? 0 : 60 + Math.abs(to[0] - from[0]) * 0.12;
+      out.edges.push({ key: n.node + ">>" + peer, from, to, ctrl: [(from[0] + to[0]) / 2, Math.min(from[1], to[1]) - lift], rate, color: css("--replica"), peer: true });
+    }
+  }
+  return out;
+}
+
+function at(e, t) {
+  if (!e.ctrl) return [e.from[0] + (e.to[0] - e.from[0]) * t, e.from[1] + (e.to[1] - e.from[1]) * t];
+  const u = 1 - t;
+  return [u * u * e.from[0] + 2 * u * t * e.ctrl[0] + t * t * e.to[0], u * u * e.from[1] + 2 * u * t * e.ctrl[1] + t * t * e.to[1]];
+}
+
+// Dots per second drawn for a rate: every request while it is a few, then
+// logarithmic, so 50k req/s still reads as busier than 5k without a blizzard.
+const visual = (r) => r <= 0 ? 0 : r < 8 ? r : Math.min(60, 8 + 12 * Math.log10(r / 8 + 1) * 2.2);
+
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  if (canvas.clientWidth !== W || canvas.clientHeight !== H) resize();
+  layout = buildLayout();
+  ctx.clearRect(0, 0, W, H);
+
+  for (const e of layout.edges) {
+    const s = shown[e.key] || (shown[e.key] = { rate: 0, acc: 0 });
+    s.rate += (e.rate - s.rate) * Math.min(1, dt * 3);
+    s.acc += visual(s.rate) * dt;
+    while (s.acc >= 1) { s.acc -= 1; particles.push({ e, t: 0, speed: e.peer ? 0.8 : 1.4, jitter: (Math.random() - 0.5) * 6 }); }
+    ctx.strokeStyle = s.rate > 0.05 ? e.color + "55" : css("--line");
+    ctx.lineWidth = s.rate > 0.05 ? 1.5 + Math.min(3, Math.log10(1 + s.rate)) : 1;
+    ctx.beginPath(); ctx.moveTo(...e.from);
+    if (e.ctrl) ctx.quadraticCurveTo(...e.ctrl, ...e.to); else ctx.lineTo(...e.to);
+    ctx.stroke();
+  }
+
+  for (const L of Object.values(layout.nodes)) drawNode(L);
+
+  particles = particles.filter((p) => p.t < 1 && layout.edges.some((e) => e.key === p.e.key));
+  for (const p of particles) {
+    p.t += dt * p.speed;
+    const e = layout.edges.find((x) => x.key === p.e.key);
+    const [x, y] = at(e, Math.min(1, p.t));
+    ctx.fillStyle = e.color;
+    ctx.shadowColor = e.color; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(x + (e.ctrl ? 0 : p.jitter * Math.sin(p.t * Math.PI)), y, e.peer ? 3.2 : 2.6, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  if (particles.length > 3000) particles = particles.slice(-3000);
+  requestAnimationFrame(frame);
+}
+
+function rr(b, r) { ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, r); }
+
+function label(text, x, y, color, size, weight, align) {
+  ctx.fillStyle = color; ctx.font = `${weight || 500} ${size}px ui-sans-serif, -apple-system, sans-serif`;
+  ctx.textAlign = align || "center"; ctx.fillText(text, x, y);
+}
+
+function glow(b, color, rate) {
+  const a = Math.min(1, Math.log10(1 + rate) / 3);
+  if (a > 0.02) { ctx.shadowColor = color; ctx.shadowBlur = 6 + 18 * a; }
+}
+
+function drawNode(L) {
+  const n = L.node;
+  ctx.strokeStyle = n.up ? css("--line") : css("--bad");
+  ctx.setLineDash(n.up ? [] : [6, 4]); rr(L.frame, 12); ctx.stroke(); ctx.setLineDash([]);
+  label(n.node, L.frame.x + 12, L.frame.y + 18, n.up ? css("--text") : css("--bad"), 12, 600, "left");
+  if (!n.up) { label("unreachable", L.frame.cx, L.frame.cy, css("--bad"), 14, 600); return; }
+  label(`CPU ${n.system.util.toFixed(0)}% · ${bytes(n.system.memory)} · ${fmt(n.keys)} keys`, L.frame.x + L.frame.w - 12, L.frame.y + 18, css("--muted"), 11, 400, "right");
+  label("clients", L.client.cx, L.client.cy - 22, css("--muted"), 11, 400);
+
+  for (const { f, b } of L.fronts) {
+    const color = css("--" + f.name);
+    glow(b, color, f.rps);
+    ctx.fillStyle = css("--panel2"); rr(b, 8); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = color; ctx.lineWidth = 1.3; rr(b, 8); ctx.stroke();
+    label(LABEL[f.name], b.cx, b.y + 16, color, 11, 600);
+    label(`${fmt(f.rps)}/s · ${f.connections}c`, b.cx, b.y + 31, css("--text"), 11, 500);
+    if (f.errors > 0) label(`${fmt(f.errors)} err/s`, b.cx, b.y + 43, css("--bad"), 10, 500);
+  }
+
+  const c = L.coord;
+  glow(c, css("--accent"), n.reads + n.writes);
+  ctx.fillStyle = css("--panel2"); rr(c, 10); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = css("--accent"); rr(c, 10); ctx.stroke();
+  label("coordinator", c.cx, c.y + 18, css("--accent"), 12, 600);
+  label(`${fmt(n.reads)} reads/s · ${fmt(n.writes)} writes/s`, c.cx, c.y + 34, css("--text"), 11, 500);
+
+  const r = L.replica;
+  const inbound = Object.values(n.received).reduce((a, b) => a + b, 0);
+  glow(r, css("--replica"), n.local_replica + inbound);
+  ctx.fillStyle = css("--panel2"); rr(r, 10); ctx.fill(); ctx.shadowBlur = 0;
+  ctx.strokeStyle = css("--replica"); rr(r, 10); ctx.stroke();
+  label("replica · quorum", r.cx, r.y + 18, css("--replica"), 12, 600);
+  label(`${fmt(n.local_replica)} local · ${fmt(inbound)} from peers /s`, r.cx, r.y + 34, css("--text"), 11, 500);
+
+  for (const { s, b } of L.shards) {
+    const rate = s.gets + s.puts;
+    const a = Math.min(1, Math.log10(1 + rate) / 3);
+    glow(b, css("--shard"), rate);
+    ctx.fillStyle = css("--panel2"); rr(b, 6); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.fillStyle = css("--shard"); ctx.globalAlpha = 0.15 + 0.6 * a; rr(b, 6); ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = s.system ? css("--muted") : css("--shard"); rr(b, 6); ctx.stroke();
+    label(s.system ? "sys" : "#" + s.index, b.cx, b.y + 15, css("--text"), 10, 600);
+    label(fmt(s.keys), b.cx, b.y + 30, css("--muted"), 10, 400);
+  }
+  const sb = L.shards[0] && L.shards[0].b;
+  if (sb) label(`shards (${n.engine})`, L.frame.cx, sb.y + sb.h + 18, css("--muted"), 11, 400);
+}
+
+resize();
+poll();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

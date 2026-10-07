@@ -1,24 +1,39 @@
-# One kurwadb node for a LAN. Host ports come from .env next to this file
-# (see .env.example), so they can be moved off whatever the host already uses.
+# A three-node kurwadb cluster for a LAN: n=3, r=2, w=2, so every key lives
+# on all three and every request is answered by two. Only the first node is
+# published; the others are reached through it, and through the dashboard at
+# http://HOST:24040/dashboard. Host ports and secrets come from .env next to
+# this file (see .env.example).
 #
 #     docker compose up -d --build
+#     docker compose --profile demo up -d     adds a load generator
 name: kurwadb
+
+x-node: &node
+  image: kurwadb:latest
+  restart: unless-stopped
+  environment: &env
+    # The password for every protocol (any user name).
+    KURWA_AUTH_TOKEN: ${KURWA_AUTH_TOKEN:?set KURWA_AUTH_TOKEN in .env}
+    # Erlang distribution between the nodes: the same cookie on all three.
+    RELEASE_COOKIE: ${KURWA_COOKIE:?set KURWA_COOKIE in .env}
+    KURWA_SEEDS: kurwadb@kurwadb,kurwadb@kurwadb2,kurwadb@kurwadb3
+    KURWA_N: "3"
+    KURWA_R: "2"
+    KURWA_W: "2"
+    # debug logs every query the SQL frontends receive
+    KURWA_LOG_LEVEL: ${KURWA_LOG_LEVEL:-notice}
+  volumes:
+    - ./procedures:/procedures:ro
 
 services:
   kurwadb:
+    <<: *node
     build:
       context: ..
       target: runtime
-    image: kurwadb:latest
     container_name: kurwadb
     # The node name is kurwadb@<hostname>; a fixed one survives re-creation.
     hostname: kurwadb
-    restart: unless-stopped
-    environment:
-      # The password for SQL Server, MySQL and PostgreSQL logins (any user name).
-      KURWA_AUTH_TOKEN: ${KURWA_AUTH_TOKEN:?set KURWA_AUTH_TOKEN in .env}
-      # debug logs every query the SQL frontends receive
-      KURWA_LOG_LEVEL: ${KURWA_LOG_LEVEL:-notice}
     ports:
       - "${KURWA_HOST_MSSQL:-1433}:1433"
       - "${KURWA_HOST_PG:-25432}:5432"
@@ -30,5 +45,39 @@ services:
       - kurwadb-data:/data
       - ./procedures:/procedures:ro
 
+  kurwadb2:
+    <<: *node
+    container_name: kurwadb2
+    hostname: kurwadb2
+    depends_on: [kurwadb]
+    volumes:
+      - kurwadb2-data:/data
+      - ./procedures:/procedures:ro
+
+  kurwadb3:
+    <<: *node
+    container_name: kurwadb3
+    hostname: kurwadb3
+    depends_on: [kurwadb]
+    volumes:
+      - kurwadb3-data:/data
+      - ./procedures:/procedures:ro
+
+  # Steady traffic for the dashboard: adds and reads over HTTP, spread over
+  # the three nodes. Only with --profile demo.
+  demo-load:
+    profiles: [demo]
+    image: curlimages/curl:8.11.1
+    container_name: kurwadb-demo-load
+    restart: unless-stopped
+    environment:
+      KURWA_AUTH_TOKEN: ${KURWA_AUTH_TOKEN}
+    volumes:
+      - ./demo-load.sh:/demo-load.sh:ro
+    entrypoint: ["/bin/sh", "/demo-load.sh"]
+    depends_on: [kurwadb, kurwadb2, kurwadb3]
+
 volumes:
   kurwadb-data:
+  kurwadb2-data:
+  kurwadb3-data:

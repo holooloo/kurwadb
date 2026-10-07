@@ -58,6 +58,7 @@ defmodule Kurwa.Replica.Endpoint do
   defp loop do
     receive do
       {:kurwa_replica, {pid, ref}, request} ->
+        Kurwa.Metrics.received(node(pid))
         send(pid, {ref, node(), answer(request)})
     end
 

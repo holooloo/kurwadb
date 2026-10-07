@@ -331,7 +331,15 @@ defmodule Kurwa.Pg.Server do
 
   # ------------------------------------------------------------- simple query
 
-  defp handle({:query, sql}, socket, state) do
+  defp handle({:query, _} = message, socket, state),
+    do: Kurwa.Metrics.measure(:pg, fn -> run_query(message, socket, state) end)
+
+  defp handle({:execute, _, _} = message, socket, %{skipping: false} = state),
+    do: Kurwa.Metrics.measure(:pg, fn -> run_execute(message, socket, state) end)
+
+  defp handle(message, socket, state), do: handle_other(message, socket, state)
+
+  defp run_query({:query, sql}, socket, state) do
     Logger.debug("kurwadb pg query: #{sql}")
 
     state =
@@ -355,16 +363,16 @@ defmodule Kurwa.Pg.Server do
   # ----------------------------------------------------------- extended query
 
   # After an error, the extended protocol discards everything up to Sync.
-  defp handle(:sync, socket, state) do
+  defp handle_other(:sync, socket, state) do
     send!(socket, Proto.ready(state.status))
     %{state | skipping: false}
   end
 
-  defp handle(_message, _socket, %{skipping: true} = state), do: state
+  defp handle_other(_message, _socket, %{skipping: true} = state), do: state
 
-  defp handle(:flush, _socket, state), do: state
+  defp handle_other(:flush, _socket, state), do: state
 
-  defp handle({:parse, name, sql, oids}, socket, state) do
+  defp handle_other({:parse, name, sql, oids}, socket, state) do
     Logger.debug("kurwadb pg parse: #{sql}")
 
     with :ok <- free_statement(state, name),
@@ -380,7 +388,7 @@ defmodule Kurwa.Pg.Server do
     end
   end
 
-  defp handle({:bind, portal, name, formats, values, result_formats}, socket, state) do
+  defp handle_other({:bind, portal, name, formats, values, result_formats}, socket, state) do
     with {:ok, entry} <- fetch_statement(state, name),
          {:ok, params} <- decode_params(entry, formats, values) do
       bound = %{entry: entry, params: params, formats: result_formats, pending: nil}
@@ -391,7 +399,7 @@ defmodule Kurwa.Pg.Server do
     end
   end
 
-  defp handle({:describe, :statement, name}, socket, state) do
+  defp handle_other({:describe, :statement, name}, socket, state) do
     case fetch_statement(state, name) do
       {:ok, entry} ->
         oids = Enum.map(entry.types, &elem(Types.oid(&1), 0))
@@ -403,7 +411,7 @@ defmodule Kurwa.Pg.Server do
     end
   end
 
-  defp handle({:describe, :portal, name}, socket, state) do
+  defp handle_other({:describe, :portal, name}, socket, state) do
     case Map.fetch(state.portals, name) do
       {:ok, portal} ->
         send!(socket, rows_or_no_data(portal.entry.columns, portal.formats))
@@ -414,7 +422,31 @@ defmodule Kurwa.Pg.Server do
     end
   end
 
-  defp handle({:execute, name, max_rows}, socket, state) do
+  defp handle_other({:close, :statement, name}, socket, state) do
+    send!(socket, Proto.close_complete())
+    %{state | statements: Map.delete(state.statements, name)}
+  end
+
+  defp handle_other({:close, :portal, name}, socket, state) do
+    send!(socket, Proto.close_complete())
+    %{state | portals: Map.delete(state.portals, name)}
+  end
+
+  defp handle_other({:password_message, _}, socket, state),
+    do: fail(socket, state, "08P01", "unexpected password message")
+
+  defp handle_other({:unsupported, type}, socket, state) do
+    message =
+      case type do
+        ?F -> "the function-call protocol is not supported"
+        t when t in [?d, ?c, ?f] -> "COPY is not supported"
+        t -> "unsupported message type #{inspect(<<t>>)}"
+      end
+
+    skip(fail(socket, state, "0A000", message))
+  end
+
+  defp run_execute({:execute, name, max_rows}, socket, state) do
     case Map.fetch(state.portals, name) do
       {:ok, %{pending: {rows, tag}} = portal} ->
         continue_portal(socket, state, name, portal, rows, tag, max_rows)
@@ -428,30 +460,6 @@ defmodule Kurwa.Pg.Server do
       :error ->
         skip(fail(socket, state, "34000", "portal \"#{name}\" does not exist"))
     end
-  end
-
-  defp handle({:close, :statement, name}, socket, state) do
-    send!(socket, Proto.close_complete())
-    %{state | statements: Map.delete(state.statements, name)}
-  end
-
-  defp handle({:close, :portal, name}, socket, state) do
-    send!(socket, Proto.close_complete())
-    %{state | portals: Map.delete(state.portals, name)}
-  end
-
-  defp handle({:password_message, _}, socket, state),
-    do: fail(socket, state, "08P01", "unexpected password message")
-
-  defp handle({:unsupported, type}, socket, state) do
-    message =
-      case type do
-        ?F -> "the function-call protocol is not supported"
-        t when t in [?d, ?c, ?f] -> "COPY is not supported"
-        t -> "unsupported message type #{inspect(<<t>>)}"
-      end
-
-    skip(fail(socket, state, "0A000", message))
   end
 
   defp skip(state), do: %{state | skipping: true}
@@ -637,6 +645,7 @@ defmodule Kurwa.Pg.Server do
   defp transition(state, _statement), do: state
 
   defp fail(socket, state, code, message) do
+    Kurwa.Metrics.error(:pg)
     send!(socket, Proto.error(code, message))
     if state.status == :transaction, do: %{state | status: :failed}, else: state
   end

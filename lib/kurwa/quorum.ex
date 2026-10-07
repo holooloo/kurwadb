@@ -56,6 +56,8 @@ defmodule Kurwa.Quorum do
   # that could land in the caller's mailbox, so the collector would be a process
   # started to do nothing. A single node, and n=1, answer inline.
   def request([only], request, need, _timeout) when only == node() and is_integer(need) do
+    Kurwa.Metrics.local_replica()
+
     case invoke(fn _ -> Replica.handle(request) end, only) do
       {:ok, value} -> %{ok: [{only, value}], failed: []}
       {:error, reason} -> %{ok: [], failed: [{only, reason}]}
@@ -116,6 +118,7 @@ defmodule Kurwa.Quorum do
             true = :erlang.monitor_node(node, true)
             ref = make_ref()
             send({name, node}, {:kurwa_replica, {self(), ref}, request})
+            Kurwa.Metrics.sent(node)
             {ref, node}
           end)
 
@@ -126,6 +129,8 @@ defmodule Kurwa.Quorum do
 
     {ok, failed} =
       if me in nodes do
+        Kurwa.Metrics.local_replica()
+
         case invoke(fn _ -> Replica.handle(request) end, me) do
           {:ok, value} -> {[{me, value}], []}
           {:error, reason} -> {[], [{me, reason}]}

@@ -20,6 +20,9 @@ for protocol in (2, 3):
     p = f"[resp{protocol}] "
     key, s = f"py:{protocol}:once", f"py:{protocol}:seen"
     r.delete(key)
+    # What an earlier run left behind: the store keeps it.
+    r.srem(s, "a", "b", "x", *[f"m{i}" for i in range(100)])
+    r.delete(f"py:{protocol}:watched", f"py:{protocol}:watched:done")
 
     # The idempotency pattern: only the first SET NX wins.
     check(p + "first set nx", r.set(key, 1, nx=True, ex=60), True)

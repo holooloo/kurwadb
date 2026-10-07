@@ -14,6 +14,8 @@ const check = (label, got, want) => {
   const client = new MongoClient(process.argv[2], { serverSelectionTimeoutMS: 5000 });
   await client.connect();
   const coll = client.db("kurwadb").collection("nodeseen");
+  // What an earlier run left behind: the store keeps it.
+  await coll.deleteMany({ _id: { $in: ["n1", "n2", "job"] } });
 
   let r = await coll.insertMany([{ _id: "n1" }, { _id: "n2" }]);
   check("insertMany", r.insertedCount, 2);
