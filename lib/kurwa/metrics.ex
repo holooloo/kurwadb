@@ -389,6 +389,7 @@ defmodule Kurwa.Metrics do
         %{
           name: frontend,
           port: port,
+          public: public(frontend, port),
           connections: connections,
           rps: 0.0,
           errors: 0.0,
@@ -397,6 +398,18 @@ defmodule Kurwa.Metrics do
         },
         Map.get(rates, frontend, %{})
       )
+    end
+  end
+
+  # host:port a client outside uses to reach this frontend on this node.
+  defp public(frontend, _port) do
+    ports = Config.get(:public_ports) || %{}
+    host = Config.get(:public_host)
+
+    case Map.get(ports, to_string(frontend)) do
+      nil -> nil
+      public_port when is_binary(host) -> "#{host}:#{public_port}"
+      public_port -> ":#{public_port}"
     end
   end
 

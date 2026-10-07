@@ -58,7 +58,18 @@ if config_env() != :test do
       if(System.get_env("KURWA_ENGINE") == "lsm", do: Kurwa.Store.Lsm, else: Kurwa.Store.Ets),
     auth_token: System.get_env("KURWA_AUTH_TOKEN"),
     tombstone_ttl: int.("KURWA_TOMBSTONE_TTL_MS", 86_400_000),
-    seeds: seeds
+    seeds: seeds,
+    # Where clients reach this node from outside, when that is not its own
+    # address and ports (a container's published ports): shown on the
+    # dashboard. KURWA_PUBLIC_PORTS is "pg=25432,mssql=1433,...".
+    public_host: System.get_env("KURWA_PUBLIC_HOST"),
+    public_ports:
+      System.get_env("KURWA_PUBLIC_PORTS", "")
+      |> String.split(",", trim: true)
+      |> Map.new(fn pair ->
+        [name, port] = String.split(pair, "=", parts: 2)
+        {String.trim(name), String.to_integer(String.trim(port))}
+      end)
 
   # debug logs every query the SQL frontends receive.
   if level = System.get_env("KURWA_LOG_LEVEL") do

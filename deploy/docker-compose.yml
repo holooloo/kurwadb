@@ -1,6 +1,7 @@
 # A three-node kurwadb cluster for a LAN: n=3, r=2, w=2, so every key lives
-# on all three and every request is answered by two. Only the first node is
-# published; the others are reached through it, and through the dashboard at
+# on all three and every request is answered by two. Every node is published
+# on its own host ports and any of them serves any request - there is no
+# balancer, a client picks a node. The dashboard is on every node's HTTP port,
 # http://HOST:24040/dashboard. Host ports and secrets come from .env next to
 # this file (see .env.example).
 #
@@ -22,6 +23,8 @@ x-node: &node
     KURWA_W: "2"
     # debug logs every query the SQL frontends receive
     KURWA_LOG_LEVEL: ${KURWA_LOG_LEVEL:-notice}
+    # The address clients use, for the dashboard to show.
+    KURWA_PUBLIC_HOST: ${KURWA_PUBLIC_HOST:-}
   volumes:
     - ./procedures:/procedures:ro
 
@@ -34,6 +37,9 @@ services:
     container_name: kurwadb
     # The node name is kurwadb@<hostname>; a fixed one survives re-creation.
     hostname: kurwadb
+    environment:
+      <<: *env
+      KURWA_PUBLIC_PORTS: mssql=${KURWA_HOST_MSSQL:-1433},pg=${KURWA_HOST_PG:-25432},mysql=${KURWA_HOST_MYSQL:-23306},resp=${KURWA_HOST_RESP:-26379},mongo=${KURWA_HOST_MONGO:-27117},http=${KURWA_HOST_HTTP:-24040}
     ports:
       - "${KURWA_HOST_MSSQL:-1433}:1433"
       - "${KURWA_HOST_PG:-25432}:5432"
@@ -50,6 +56,10 @@ services:
     container_name: kurwadb2
     hostname: kurwadb2
     depends_on: [kurwadb]
+    environment:
+      <<: *env
+      KURWA_PUBLIC_PORTS: mssql=21434,pg=25433,mysql=23307,resp=26380,mongo=27118,http=24041
+    ports: ["21434:1433", "25433:5432", "23307:3306", "26380:6379", "27118:27017", "24041:4040"]
     volumes:
       - kurwadb2-data:/data
       - ./procedures:/procedures:ro
@@ -59,6 +69,10 @@ services:
     container_name: kurwadb3
     hostname: kurwadb3
     depends_on: [kurwadb]
+    environment:
+      <<: *env
+      KURWA_PUBLIC_PORTS: mssql=21435,pg=25434,mysql=23308,resp=26381,mongo=27119,http=24042
+    ports: ["21435:1433", "25434:5432", "23308:3306", "26381:6379", "27119:27017", "24042:4040"]
     volumes:
       - kurwadb3-data:/data
       - ./procedures:/procedures:ro
