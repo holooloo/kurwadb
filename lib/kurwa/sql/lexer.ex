@@ -24,7 +24,7 @@ defmodule Kurwa.Sql.Lexer do
           | {:op, binary()}
 
   @doc "Tokenises `sql`. Positional `?` parameters are numbered in order."
-  @spec tokenize(binary(), :pg | :mysql) :: {:ok, [token()]} | {:error, binary()}
+  @spec tokenize(binary(), :pg | :mysql | :tsql) :: {:ok, [token()]} | {:error, binary()}
   def tokenize(sql, dialect \\ :pg) when is_binary(sql) do
     lex(sql, dialect, 1, [])
   end
@@ -53,6 +53,34 @@ defmodule Kurwa.Sql.Lexer do
       [_comment, rest] -> lex(rest, d, n, acc)
       [_unterminated] -> {:error, "unterminated /* comment"}
     end
+  end
+
+  # T-SQL: [bracketed] identifiers, N'unicode' strings, @named parameters.
+  defp lex(<<?[, rest::binary>>, :tsql = d, n, acc) do
+    case quoted(rest, ?], d, []) do
+      {:ok, text, rest} -> lex(rest, d, n, [{:qident, text} | acc])
+      :error -> {:error, "unterminated [identifier]"}
+    end
+  end
+
+  defp lex(<<nn, ?', rest::binary>>, :tsql = d, n, acc) when nn in [?N, ?n] do
+    case quoted(rest, ?', d, []) do
+      {:ok, text, rest} -> lex(rest, d, n, [{:string, text} | acc])
+      :error -> {:error, "unterminated quoted string"}
+    end
+  end
+
+  # @@VERSION is a system variable, not the parameter @VERSION after an @.
+  defp lex(<<?@, ?@, rest::binary>>, :tsql = d, n, acc) do
+    {word, rest} = word(rest, [])
+    lex(rest, d, n, [{:ident, String.downcase(word)}, {:op, "@"}, {:op, "@"} | acc])
+  end
+
+  defp lex(<<?@, c, _::binary>> = sql, :tsql = d, n, acc)
+       when c in ?a..?z or c in ?A..?Z or c == ?_ or c >= 128 do
+    <<?@, rest::binary>> = sql
+    {word, rest} = word(rest, [])
+    lex(rest, d, n, [{:named, String.downcase(word)} | acc])
   end
 
   defp lex(<<q, rest::binary>>, d, n, acc) when q in [?', ?"] or (q == ?` and d == :mysql) do

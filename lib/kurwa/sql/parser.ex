@@ -31,19 +31,21 @@ defmodule Kurwa.Sql.Parser do
   @default_table "kurwa"
   # A query is a catalog query when it reads a catalog table - not when it
   # merely calls pg_catalog.version(), which drivers do on their own.
-  @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|pg_(class|namespace|attribute|type|database|roles|settings|index|proc|description|am|tables|indexes|views|matviews|extension|enum|range|collation|constraint|inherits)\b)/i
+  @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|sys\.|master\.|pg_(class|namespace|attribute|type|database|roles|settings|index|proc|description|am|tables|indexes|views|matviews|extension|enum|range|collation|constraint|inherits)\b)/i
 
   @type error :: {:error, sqlstate :: binary(), message :: binary()}
 
   @doc "Parses one query string - which may hold several statements - into a list of statements."
-  @spec parse(binary(), :pg | :mysql) :: {:ok, [term()]} | error()
+  @spec parse(binary(), :pg | :mysql | :tsql) :: {:ok, [term()]} | error()
   def parse(sql, dialect \\ :pg) do
     if Regex.match?(@catalog, sql) do
       {:ok, [{:catalog, sql}]}
     else
       with {:ok, tokens} <- lex(sql, dialect) do
         tokens
-        |> split([], [])
+        |> then(fn tokens ->
+          if dialect == :tsql, do: split_tsql(tokens, 0, [], []), else: split(tokens, [], [])
+        end)
         |> Enum.reduce_while({:ok, []}, fn statement, {:ok, acc} ->
           case statement(statement) do
             {:ok, ast} -> {:cont, {:ok, [ast | acc]}}
@@ -79,6 +81,47 @@ defmodule Kurwa.Sql.Parser do
     do: split(rest, [], [Enum.reverse(current) | done])
 
   defp split([token | rest], current, done), do: split(rest, [token | current], done)
+
+  # T-SQL does not need semicolons between statements: "SET NOCOUNT ON SELECT 1"
+  # is two. So a batch also splits before a statement keyword at the top level -
+  # except right after IF (...), where the keyword is the IF's body.
+  @tsql_starts ~w(select insert delete update set use begin commit rollback if declare exec execute print save create drop merge)
+
+  defp split_tsql([], _depth, [], []), do: [[]]
+  defp split_tsql([], _depth, [], done), do: Enum.reverse(done)
+  defp split_tsql([], _depth, current, done), do: Enum.reverse([Enum.reverse(current) | done])
+  defp split_tsql([{:op, ";"} | rest], 0, [], done), do: split_tsql(rest, 0, [], done)
+
+  defp split_tsql([{:op, ";"} | rest], 0, current, done),
+    do: split_tsql(rest, 0, [], [Enum.reverse(current) | done])
+
+  defp split_tsql([{:op, "("} = t | rest], depth, current, done),
+    do: split_tsql(rest, depth + 1, [t | current], done)
+
+  defp split_tsql([{:op, ")"} = t | rest], depth, current, done),
+    do: split_tsql(rest, max(depth - 1, 0), [t | current], done)
+
+  defp split_tsql([{:ident, kw} = t | rest], 0, current, done)
+       when kw in @tsql_starts and current != [] do
+    if body_of_if?(current) or continues?(current, kw),
+      do: split_tsql(rest, 0, [t | current], done),
+      else: split_tsql(rest, 0, [t], [Enum.reverse(current) | done])
+  end
+
+  defp split_tsql([t | rest], depth, current, done),
+    do: split_tsql(rest, depth, [t | current], done)
+
+  # IF NOT EXISTS (...) <statement>: the statement right after the condition.
+  defp body_of_if?([{:op, ")"} | _] = current), do: List.last(current) == {:ident, "if"}
+  defp body_of_if?(_), do: false
+
+  # Keywords that continue the statement they follow rather than start one:
+  # SET NOCOUNT ON, BEGIN TRAN, COMMIT TRAN, SET TRANSACTION ..., DELETE inside OUTPUT.
+  defp continues?([{:ident, prev} | _], kw)
+       when prev in ~w(transaction isolation) and kw == "set", do: true
+
+  defp continues?(current, "set"), do: List.last(current) == {:ident, "update"}
+  defp continues?(_, _), do: false
 
   # ---------------------------------------------------------------- statements
 
@@ -149,6 +192,60 @@ defmodule Kurwa.Sql.Parser do
     do: {:ok, {:utility, :rollback, "ROLLBACK"}}
 
   defp statement([{:ident, "savepoint"} | _]), do: {:ok, {:utility, :savepoint, "SAVEPOINT"}}
+  defp statement([{:ident, "save"} | _]), do: {:ok, {:utility, :savepoint, "SAVE TRANSACTION"}}
+
+  # T-SQL's idempotent insert: IF NOT EXISTS (SELECT ... FROM t WHERE key = x)
+  # INSERT INTO t VALUES (x) - which is ON CONFLICT DO NOTHING, and goes through
+  # add_new, so one of any number of racing batches inserts.
+  defp statement([
+         {:ident, "if"},
+         {:ident, "not"},
+         {:ident, "exists"},
+         {:op, "("},
+         {:ident, "select"} | rest
+       ]) do
+    with {:ok, {:select, guard}, [{:op, ")"} | body]} <- select(rest),
+         {:ok, {:insert, table, columns, [row], returning, _}} <- statement(body),
+         true <- guard_matches?(guard, table, columns, row) do
+      {:ok, {:insert, table, columns, [row], returning, :nothing}}
+    else
+      {:error, _, _} = error ->
+        error
+
+      _ ->
+        error(
+          "0A000",
+          "the only IF is IF NOT EXISTS (SELECT ... FROM t WHERE [key] = x) INSERT INTO t VALUES (x)"
+        )
+    end
+  end
+
+  # IF EXISTS (...) DELETE: a DELETE already does nothing to a key that is not there.
+  defp statement([{:ident, "if"}, {:ident, "exists"}, {:op, "("}, {:ident, "select"} | rest]) do
+    with {:ok, {:select, _guard}, [{:op, ")"}, {:ident, "delete"} | _] = after_guard} <-
+           select(rest),
+         [{:op, ")"} | body] <- after_guard do
+      statement(body)
+    else
+      {:error, _, _} = error -> error
+      _ -> error("0A000", "the only IF EXISTS is IF EXISTS (...) DELETE ...")
+    end
+  end
+
+  defp statement([{:ident, "print"} | rest]) do
+    with {:ok, expr, []} <- expr(rest), do: {:ok, {:print, expr}}
+  end
+
+  defp statement([{:ident, kw} | _]) when kw in ~w(exec execute),
+    do:
+      error(
+        "0A000",
+        "EXEC of a procedure is not supported yet: procedures are planned as files deployed with the node"
+      )
+
+  defp statement([{:ident, "declare"} | _]),
+    do: error("0A000", "DECLARE belongs to procedures, which are not supported yet")
+
   defp statement([{:ident, "release"} | _]), do: {:ok, {:utility, :release, "RELEASE"}}
 
   defp statement([{:ident, "set"} | rest]), do: {:ok, {:set, setting(rest)}}
@@ -171,13 +268,32 @@ defmodule Kurwa.Sql.Parser do
   # ------------------------------------------------------------------- select
 
   defp select(tokens) do
-    with {:ok, items, rest} <- items(tokens, []),
+    with {:ok, top, tokens} <- top(tokens),
+         {:ok, items, rest} <- items(tokens, []),
          {:ok, from, rest} <- from(rest),
          {:ok, where, rest} <- where(rest),
          {:ok, limit, rest} <- limit(rest) do
-      {:ok, {:select, %{items: items, from: from, where: where, limit: limit}}, rest}
+      {:ok, {:select, %{items: items, from: from, where: where, limit: limit || top}}, rest}
     end
   end
+
+  # T-SQL: SELECT TOP n or TOP (n).
+  defp top([{:ident, "top"}, {:op, "("} | rest]) do
+    with {:ok, expr, [{:op, ")"} | rest]} <- expr(rest), do: {:ok, expr, rest}
+  end
+
+  defp top([{:ident, "top"} | rest]) do
+    with {:ok, expr, rest} <- primary(rest), do: {:ok, expr, rest}
+  end
+
+  defp top(tokens), do: {:ok, nil, tokens}
+
+  defp guard_matches?(%{from: table, where: {:keys, [key]}}, table, columns, row) do
+    index = Enum.find_index(columns || ["key"], &(&1 == "key"))
+    index != nil and Enum.at(row, index) == key
+  end
+
+  defp guard_matches?(_guard, _table, _columns, _row), do: false
 
   defp items([{:op, "*"} | rest], []), do: after_item(rest, [{:star, "key"}])
 
@@ -194,7 +310,8 @@ defmodule Kurwa.Sql.Parser do
   defp alias_name([{:ident, "as"}, name | rest]), do: {text(name), rest}
 
   defp alias_name([{type, name} | rest])
-       when (type == :ident and name not in ~w(from where limit order group union having)) or
+       when (type == :ident and
+               name not in ~w(from where limit order group union having values into output on top)) or
               type == :qident,
        do: {name, rest}
 
@@ -259,13 +376,18 @@ defmodule Kurwa.Sql.Parser do
   defp insert(tokens) do
     with {:ok, table, rest} <- table(tokens),
          {:ok, columns, rest} <- columns(rest),
+         {:ok, output, rest} <- output(rest),
          {:ok, rows, rest} <- values(rest),
          {:ok, conflict, returning, rest} <- conflict_and_returning(rest),
          :ok <- finished(rest),
          :ok <- arity(columns, rows) do
-      {:ok, {:insert, table, columns, rows, returning, conflict}}
+      {:ok, {:insert, table, columns, rows, returning || output, conflict}}
     end
   end
+
+  # T-SQL's OUTPUT inserted.[key] / deleted.[key], which is RETURNING.
+  defp output([{:ident, "output"} | rest]), do: items(rest, [])
+  defp output(rest), do: {:ok, nil, rest}
 
   defp columns([{:op, "("} | rest]) do
     with {:ok, names, rest} <- names(rest, []) do
@@ -350,9 +472,12 @@ defmodule Kurwa.Sql.Parser do
 
   defp delete(tokens) do
     with {:ok, table, rest} <- table(tokens),
+         {:ok, output, rest} <- output(rest),
          {:ok, where, rest} <- where(rest),
          {:ok, _conflict, returning, rest} <- conflict_and_returning(rest),
          :ok <- finished(rest) do
+      returning = returning || output
+
       case where do
         nil ->
           error("0A000", "DELETE without WHERE key = ... would be a scan, and there are none")
@@ -438,7 +563,13 @@ defmodule Kurwa.Sql.Parser do
        when type in [:ident, :qident] and name in ["pg_catalog", "public"],
        do: call(fname, rest)
 
+  defp primary([{:named, name} | rest]), do: {:ok, {:param, name}, rest}
   defp primary([{_, name}, {:op, "("} | rest]), do: call(name, rest)
+
+  # A qualified column - inserted.key, t.[key] - is the column.
+  defp primary([{t1, _qualifier}, {:op, "."}, {t2, name} | rest])
+       when t1 in [:ident, :qident] and t2 in [:ident, :qident],
+       do: {:ok, {:col, name}, rest}
 
   defp primary([{type, name} | rest]) when type in [:ident, :qident],
     do: {:ok, {:col, name}, rest}
@@ -467,9 +598,15 @@ defmodule Kurwa.Sql.Parser do
   # ------------------------------------------------------------------- tables
 
   # schema.table is accepted for the schema psql and drivers assume.
+  # kurwadb.dbo.seen: SQL Server's three-part name, with this database.
+  defp table([{d, "kurwadb"}, {:op, "."}, {s, _} = schema, {:op, "."}, {t, _} = name | rest])
+       when d in [:ident, :qident] and s in [:ident, :qident] and t in [:ident, :qident],
+       do: table([schema, {:op, "."}, name | rest])
+
+  # public (PostgreSQL's) and dbo (SQL Server's) are where every set is.
   defp table([{s, schema}, {:op, "."}, {t, name} | rest])
        when s in [:ident, :qident] and t in [:ident, :qident] do
-    if schema == "public", do: table([{t, name} | rest]), else: no_schema(schema)
+    if schema in ["public", "dbo"], do: table([{t, name} | rest]), else: no_schema(schema)
   end
 
   defp table([{type, name} | rest]) when type in [:ident, :qident] do

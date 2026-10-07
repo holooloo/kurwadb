@@ -150,6 +150,12 @@ defmodule Kurwa.Sql.Exec do
   # MySQL's USE: there is one database, and the frontend says whether this is it.
   defp execute({:use, database}, _params, _session), do: {:use, database}
 
+  # T-SQL's PRINT: an informational message, no result.
+  defp execute({:print, expr}, params, session) do
+    notice(to_string(eval(expr, params, session)))
+    {:command, "PRINT"}
+  end
+
   # MySQL's DESCRIBE: every set has the one column, and it is the key.
   defp execute({:describe_table, _set}, _params, _session) do
     columns = for name <- ~w(Field Type Null Key Default Extra), do: {name, :text}
@@ -284,6 +290,14 @@ defmodule Kurwa.Sql.Exec do
 
   defp eval({:array, exprs}, params, session), do: Enum.map(exprs, &eval(&1, params, session))
 
+  # A named parameter, @key in T-SQL: params is then a map.
+  defp eval({:param, name}, params, _session) when is_binary(name) do
+    case Map.fetch(params, name) do
+      {:ok, value} -> value
+      :error -> fail("08P01", "must declare the scalar variable \"@#{name}\"")
+    end
+  end
+
   defp eval({:param, n}, params, _session) do
     case Enum.fetch(params, n - 1) do
       {:ok, value} -> value
@@ -335,6 +349,37 @@ defmodule Kurwa.Sql.Exec do
   defp call("connection_id", [], s), do: s.pid
   defp call("last_insert_id", [], _s), do: 0
   defp call("found_rows", [], _s), do: 0
+
+  # T-SQL's built-ins that clients and ORMs call on connect.
+  defp call("db_name", [], s), do: Map.get(s, :database, "kurwadb")
+  defp call("schema_name", [], _s), do: "dbo"
+
+  defp call(name, [], s) when name in ~w(suser_sname suser_name user_name original_login),
+    do: s.user
+
+  defp call("host_name", [], _s), do: to_string(node())
+  defp call("app_name", [], s), do: Map.get(s, :app, "")
+
+  defp call(name, [], _s)
+       when name in ~w(getdate sysdatetime getutcdate sysutcdatetime current_timestamp),
+       do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  defp call(name, [], _s) when name in ~w(scope_identity ident_current), do: nil
+
+  defp call("newid", [], _s) do
+    <<a::32, b::16, _::4, c::12, _::2, d::14, e::48>> = :crypto.strong_rand_bytes(16)
+    hex = fn n, digits -> n |> Integer.to_string(16) |> String.pad_leading(digits, "0") end
+    "#{hex.(a, 8)}-#{hex.(b, 4)}-4#{hex.(c, 3)}-#{hex.(0x8000 + d, 4)}-#{hex.(e, 12)}"
+  end
+
+  defp call("isnull", [a, b], _s), do: if(a == nil, do: b, else: a)
+  defp call("coalesce", args, _s), do: Enum.find(args, &(&1 != nil))
+  defp call("object_id", [_name | _], _s), do: nil
+
+  defp call("serverproperty", [property], s) do
+    Map.get(Map.get(s, :server_properties, %{}), String.downcase(to_string(property)))
+  end
+
   defp call("row_count", [], _s), do: -1
   defp call("current_database", [], s), do: Map.get(s, :database, "kurwadb")
   defp call("current_catalog", [], s), do: Map.get(s, :database, "kurwadb")
@@ -478,6 +523,14 @@ defmodule Kurwa.Sql.Exec do
   defp type({:call, name, _}, _)
        when name in ~w(connection_id last_insert_id found_rows row_count), do: :int8
 
+  # System variables that are numbers, in SQL Server and MySQL alike.
+  @integer_sysvars ~w(spid trancount rowcount error datefirst textsize lock_timeout max_connections
+                      microsoftversion options autocommit auto_increment_increment interactive_timeout
+                      wait_timeout net_write_timeout net_buffer_length max_allowed_packet
+                      lower_case_table_names performance_schema pseudo_thread_id server_id
+                      transaction_read_only tx_read_only)
+
+  defp type({:sysvar, name}, _) when name in @integer_sysvars, do: :int4
   defp type({:sysvar, _}, _), do: :text
   defp type({:uservar, _}, _), do: :text
   defp type({:call, _, _}, _), do: :text

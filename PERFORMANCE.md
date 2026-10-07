@@ -28,6 +28,7 @@ bench/client_ceiling.sh                            # is the load generator the c
 bench/pg.sh                                        # the PostgreSQL frontend under pgbench
 bench/mysql.sh                                     # the MySQL frontend under mysqlslap
 bench/mongo.sh                                     # the MongoDB frontend under the Node.js driver
+bench/mssql.sh                                     # the SQL Server frontend under tedious, over TLS
 REDIS_DIR=... bench/versus.sh                      # against Redis: HTTP, and RESP with RESP
 ```
 
@@ -190,6 +191,32 @@ two runs, 0.13.0:
 The same as the other three protocols, within their noise: HTTP 124-132k,
 RESP 125-129k, PostgreSQL 136-147k. Which is the result of the RESP section
 again from another side - none of these wire formats is what a request costs.
+
+## The SQL Server frontend
+
+`bench/mssql.sh`: one node, 100 000 keys, `SELECT [key] FROM kurwa WHERE
+[key] = @k` through tedious as `sp_executesql`, 64 connections, 0.15.0:
+
+| | key present | key absent |
+|---|---|---|
+| TLS (tedious's default), 4 processes × 16 | 48 200 – 48 800 /sec | 47 700 – 48 700 /sec |
+| TLS, 2 × 32 / 8 × 8 | 46 600 / 45 700 /sec | |
+| login-only encryption, then plain | 81 600 /sec | 78 300 /sec |
+
+More client processes do not help, so this ceiling is the server's - and
+encryption is most of it. The rest, measured in-process per request:
+
+| | |
+|---|---|
+| decode the RPC: headers, parameters, UTF-16 | 6.1 µs |
+| parse the T-SQL | 2.3 µs |
+| the lookup | 1.1 µs |
+| encode COLMETADATA, ROW, DONE, packets | 1.3 µs |
+
+About 11 µs (`bench/mssql_server_cost.exs`). The difference between the TLS
+and plain rows above is encryption, about 40% of the throughput on this path,
+where every message passes through `:ssl`'s connection processes. Both have an
+obvious next step - see "Cheaper TLS on TDS" in ARCHITECTURE.md.
 
 ## The MongoDB frontend
 

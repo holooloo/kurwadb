@@ -7,11 +7,11 @@ deliberately still missing.
 ## Shape
 
 ```
-  clients       HTTP    9P2000   PostgreSQL    MySQL     Redis     MongoDB
-                  |       |          |           |         |          |
-  frontends   Gateway   NineP    Kurwa.Pg   Kurwa.Mysql Kurwa.Resp Kurwa.Mongo   thin adapters
-                  \       |           \         /         /          /
-                   \      |            Kurwa.Sql         /          /
+  clients     HTTP   9P2000  PostgreSQL  MySQL   SQL Server   Redis   MongoDB
+                |      |         |         |         |          |        |
+  frontends  Gateway NineP   Kurwa.Pg Kurwa.Mysql Kurwa.Mssql Kurwa.Resp Kurwa.Mongo
+                \      |          \        |        /          /        /
+                 \     |            Kurwa.Sql (pg, mysql, tsql)/        /
   api                  Kurwa / Kurwa.Namespace          keys and named sets
                                  |
   read path          Kurwa.Extractor                    cache + single-flight
@@ -27,8 +27,8 @@ deliberately still missing.
 
 Nothing above `Coordinator` knows about replication, and nothing below it knows
 about protocols. That is what makes a new frontend cheap - 9P was added without
-touching the core, and so were PostgreSQL, Redis, MySQL and MongoDB - and what
-let a disk engine be swapped in without touching the cluster.
+touching the core, and so were PostgreSQL, Redis, MySQL, MongoDB and SQL Server
+- and what let a disk engine be swapped in without touching the cluster.
 
 ## The data model
 
@@ -525,6 +525,57 @@ What is MySQL's own:
   failure - a scan is 1235 (`ER_NOT_SUPPORTED_YET`), a syntax error 1064 - and
   the ROLLBACK warning appears in `SHOW WARNINGS`.
 
+## The SQL Server frontend
+
+`Kurwa.Mssql` speaks TDS 7.4 - SQL Server 2012 to 2022 - and TDS 8, over the
+same `Kurwa.Sql` as PostgreSQL and MySQL in a third dialect, `:tsql`:
+`[brackets]` and `"quotes"` for identifiers, `N'unicode'`, `@named`
+parameters, `@@variables`, `TOP n`, `OUTPUT inserted.[key]` / `deleted.[key]`
+as RETURNING, `dbo` and `kurwadb.dbo.` as the schema every set is in, and
+statements that run together without semicolons - a batch also splits before
+a statement keyword at the top level. T-SQL's idempotent insert,
+`IF NOT EXISTS (SELECT ... WHERE [key] = x) INSERT INTO t VALUES (x)`, is
+recognised as a whole, checked to guard the same key it inserts, and becomes
+`ON CONFLICT DO NOTHING` - `add_new`, one winner. `IF EXISTS (...) DELETE` is a
+DELETE.
+
+* **Encryption** is most of the work. Drivers encrypt by default, and TDS 7
+  negotiates TLS inside its own framing: the handshake rides in PRELOGIN
+  packets, and only then do TLS records go bare. `Kurwa.Mssql.Transport` is the
+  `gen_tcp`-shaped process `:ssl` is given (`cb_info`): it wraps outgoing
+  handshake bytes in PRELOGIN packets until told to stop, and tells incoming
+  ones apart by their first byte (0x12 is TDS, 0x14-0x17 a TLS record). Three
+  modes follow from the client's choice. Encryption on: TLS for the whole
+  connection. Encryption off, but supported: only LOGIN7 is encrypted, and the
+  transport then hands the TCP socket back, passive, after closing TLS without
+  its close alert reaching the client. Not supported: plain TCP throughout.
+  TDS 8 ("strict") sends a TLS ClientHello before any TDS, ALPN `tds/8.0`, and
+  the same transport serves it unwrapped - its buffer already holds the bytes
+  ThousandIsland read, which is what direct TLS needs.
+* **The certificate.** With `mssql_tls` unset, a self-signed one is made at
+  start, as SQL Server itself does; clients then pass
+  `TrustServerCertificate=yes`. It is built field by field: Erlang's test
+  helper omits the NULL parameters of the RSA key identifier, which Go's x509
+  - so sqlcmd and go-mssqldb - refuses, and macOS refuses a TLS certificate
+  without SAN, key usage and server-auth extended usage, or valid longer than
+  825 days. Strict encryption validates the certificate whatever the client's
+  trust setting, so it needs a configured one the client trusts.
+* **Login.** LOGIN7's password is obfuscated, not encrypted - which is why it
+  always travels inside TLS - and is checked against `auth_token`, for any
+  login name. Integrated (Windows) authentication is refused by name (18452),
+  a wrong password is 18456, another database 4060.
+* **Parameters** come as RPCs, not text: `sp_executesql` with the statement,
+  a declaration string and named typed values; `sp_prepare` / `sp_execute` /
+  `sp_prepexec` / `sp_unprepare` with an integer handle returned as an OUTPUT
+  parameter. Values are decoded by TDS type - integers, bit, float, GUID,
+  decimal, (n)varchar including `(max)` sent as PLP chunks, varbinary - and the
+  statement reads them as `@name`.
+* **Transactions**: `BEGIN TRAN` and ODBC's transaction-manager requests get
+  the ENVCHANGE descriptors drivers track and `@@TRANCOUNT` follows them;
+  `ROLLBACK` adds an informational message that nothing was rolled back.
+* **Errors** carry SQL Server's numbers - 102 for syntax, 207 for a column, 137
+  for an undeclared variable - and 50000 for kurwadb's own refusals.
+
 ## The MongoDB frontend
 
 `Kurwa.Mongo` speaks OP_MSG - and OP_QUERY, which drivers still use for the
@@ -648,6 +699,20 @@ more than it needs to. Levels would bound the write amplification.
 the "key = hash(value)" model - and its arena plus separate index is a different
 blueprint for immutable on-disk sets than the LSM one, worth having if content
 addressing ever becomes the point.
+
+**Procedures for SQL Server, as files.** `CREATE PROCEDURE` over the wire would
+need a replicated catalog that stores values, which this store does not have.
+The decision is to keep procedures as `.sql` files deployed with each node and
+loaded at start - the same on every node, managed by deployment, not by DDL -
+running a T-SQL subset: parameters with OUTPUT and defaults, scalar DECLARE and
+SET, IF/ELSE and IF EXISTS on a key, RETURN codes, the statements a set
+answers, nested EXEC, THROW. Temporary tables and table variables are tables
+with columns, and stay out.
+
+**Cheaper TLS on TDS.** A lookup costs about 11 µs on the server; through
+tedious it is 80 000 a second without TLS and 48 000 with it. The TLS path
+goes through `:ssl`'s processes in passive mode on every message; active mode,
+or caching the parsed statement of an `sp_executesql` text, would cut it.
 
 **TLS on the MySQL, Redis and MongoDB ports.** PostgreSQL has it; the others
 accept clients whose default does not insist on it, which is most of them.

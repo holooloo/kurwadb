@@ -44,6 +44,13 @@ if config_env() != :test do
     mysql_port: int.("KURWA_MYSQL_PORT", 3306),
     start_mongo: System.get_env("KURWA_MONGO") in ~w(1 true),
     mongo_port: int.("KURWA_MONGO_PORT", 27017),
+    start_mssql: System.get_env("KURWA_MSSQL") in ~w(1 true),
+    mssql_port: int.("KURWA_MSSQL_PORT", 1433),
+    mssql_tls:
+      (case {System.get_env("KURWA_MSSQL_TLS_CERT"), System.get_env("KURWA_MSSQL_TLS_KEY")} do
+         {cert, key} when is_binary(cert) and is_binary(key) -> [certfile: cert, keyfile: key]
+         _ -> nil
+       end),
     cache: System.get_env("KURWA_CACHE") in ~w(1 true),
     wal_sync_on_write: System.get_env("KURWA_WAL_SYNC_ON_WRITE") in ~w(1 true),
     engine:

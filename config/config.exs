@@ -77,7 +77,15 @@ config :kurwadb,
 
   # MongoDB protocol: mongosh and the MongoDB drivers, off by default
   start_mongo: false,
-  mongo_port: 27017
+  mongo_port: 27017,
+
+  # Microsoft SQL Server protocol (TDS): sqlcmd, ODBC, .NET, JDBC, off by default.
+  # mssql_tls takes :ssl server options; without them a self-signed certificate
+  # is made at start, as SQL Server does. mssql_encryption: :off refuses TLS.
+  start_mssql: false,
+  mssql_port: 1433,
+  mssql_tls: nil,
+  mssql_encryption: :on
 
 config :logger, level: :info
 

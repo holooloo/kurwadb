@@ -178,7 +178,7 @@
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 29 minutes</span>
+      <span>about 31 minutes</span>
       <span>re-measured 6 October 2026</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
@@ -658,13 +658,13 @@ remove  →  delete</code></pre>
        write that could be acknowledged and lost.</p>
   </blockquote>
 
-  <h2 id="six-protocols-one-path">Six protocols, one path</h2>
+  <h2 id="seven-protocols-one-path">Seven protocols, one path</h2>
 
   <p>Plan 9 turned out to be the first of several. kurwadb now also answers the
-     PostgreSQL, MySQL, Redis and MongoDB wire protocols, so <code>psql</code>,
-     <code>mysql</code>, <code>redis-cli</code>, <code>mongosh</code> and the drivers
-     people already have connect to it as they are. With HTTP, that sounds like six
-     products. It is one, and the reason is worth showing, because
+     PostgreSQL, MySQL, Redis, MongoDB and SQL Server wire protocols, so <code>psql</code>,
+     <code>mysql</code>, <code>redis-cli</code>, <code>mongosh</code>, <code>sqlcmd</code>
+     and the drivers people already have connect to it as they are. With HTTP, that sounds
+     like seven products. It is one, and the reason is worth showing, because
      it is the same reason 9P cost nothing: the store underneath was never told what a
      protocol is.</p>
 
@@ -766,6 +766,37 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
      running the command and encoding the reply costs the server 5.7 µs, of which the
      lookup is 0.9.</p>
 
+  <h3>And SQL Server, where the conversation is mostly TLS</h3>
+
+  <p>Microsoft's protocol, TDS, carried the same SQL as PostgreSQL and MySQL with a third
+     dialect in the lexer — <code>[brackets]</code>, <code>@named</code> parameters,
+     <code>TOP</code>, <code>OUTPUT inserted.[key]</code>, and T-SQL's habit of running
+     statements together without semicolons. Its idempotent insert,
+     <code>IF NOT EXISTS (SELECT … WHERE [key] = @k) INSERT …</code>, is recognised whole
+     and becomes <code>add_new</code>, so two racing batches still produce one row.</p>
+
+  <p>What took the time was encryption. Current SQL Server drivers encrypt by default, and
+     TDS 7 does it inside its own framing: the TLS handshake travels as the payload of
+     PRELOGIN packets, both ways, and only afterwards do TLS records go over the socket
+     bare. Erlang's <code>:ssl</code> accepts any transport that looks like
+     <code>gen_tcp</code>, so the fix was a small process standing between the socket and
+     <code>:ssl</code> that wraps what goes out and tells the two kinds of incoming bytes
+     apart by their first one — 0x12 for a PRELOGIN packet, 0x14 to 0x17 for a TLS record.
+     A client that turns encryption off still sends its login encrypted and then carries
+     on in the clear, so the same process also has to hand the socket back mid-connection
+     without a single byte of TLS reaching the client after it.</p>
+
+  <p>And a server with no certificate configured has to make one, as SQL Server does. The
+     first, from Erlang's own test helper, was rejected by Go's x509 parser — and so by
+     <code>sqlcmd</code> — because its RSA key identifier left out a NULL that the standard
+     says is there; the next was rejected by macOS for lacking the extensions a TLS
+     certificate must have. The third is built field by field and works.</p>
+
+  <p><code>sqlcmd</code>, pymssql and tedious run their checks against it, encrypted and
+     not, with <code>sp_executesql</code> and prepared statements. TLS is the expensive
+     part on the server too: 48,000 lookups a second through tedious with encryption,
+     80,000 without, against about 11 µs of everything else per request.</p>
+
   <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
 
   <p>A tie with Redis on one node is not a reason to use anything. The reasons are
@@ -826,13 +857,13 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
      way down and see what fell out. Remove values, and the merge function disappears.
      Remove the merge function, and the leader has nothing left to serialise. Remove the
      leader, and a membership check is one lookup in your own process. Then the thing
-     turns out to mount as a filesystem, set union turns out to be free, and five wire
-     protocols turn out to be five thin adapters over one call.</p>
+     turns out to mount as a filesystem, set union turns out to be free, and six wire
+     protocols turn out to be six thin adapters over one call.</p>
 
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 346 tests — run against both engines — plus
+    <p><strong>kurwadb</strong> is MIT-licensed, 357 tests — run against both engines — plus
        19 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·

@@ -760,7 +760,7 @@ member kurwa3@10.0.0.3 down</span>
   <section class="row">
     <div class="rail"><span class="eyebrow">PostgreSQL</span></div>
     <div class="col">
-      <h2>psql, mysql, mongosh, redis-cli, and the driver you already have</h2>
+      <h2>psql, mysql, sqlcmd, mongosh, redis-cli, and the driver you already have</h2>
       <p>kurwadb speaks the PostgreSQL wire protocol. A set is a table with one column,
          <code>key</code>, and the queries are the ones a set can answer without a scan.</p>
 <pre><span class="k">INSERT INTO</span> seen <span class="k">VALUES</span> ('order:1'), ('order:2');
@@ -786,6 +786,9 @@ member kurwa3@10.0.0.3 down</span>
          <code>mariadb</code> and the MySQL connectors — <code>INSERT IGNORE</code>,
          prepared statements, <code>SHOW TABLES</code>, columns named the way MySQL names
          them — around 130,000 queries a second.</p>
+      <p>And SQL Server: <code>sqlcmd</code>, ODBC and tedious connect over TLS, as they do by
+         default, and T-SQL's <code>IF NOT EXISTS (…) INSERT</code> is an insert with one
+         winner.</p>
       <p>And MongoDB: a collection is a set, a document is <code>{_id: key}</code>, a second
          insert of an <code>_id</code> is <code>E11000</code> with one winner, and every node
          answers as a <code>mongos</code>, so a driver given several nodes fails over between
