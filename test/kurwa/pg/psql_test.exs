@@ -103,7 +103,7 @@ defmodule Kurwa.Pg.PsqlTest do
     end)
 
     {out, 0} = psql(context, ["-c", "\\dt"])
-    assert out =~ ~r/public \| #{set}\s*\| table \| tester/
+    assert out =~ ~r/public\s*\| #{set}\s*\| table \| tester/
 
     {out, 0} = psql(context, ["-c", "\\d #{set}"])
     assert out =~ ~s(Table "public.#{set}")

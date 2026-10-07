@@ -17,6 +17,53 @@ defmodule Kurwa.Pg.ServerTest do
     {:ok, socket: socket, startup: startup, set: "pgtest-#{System.unique_integer([:positive])}"}
   end
 
+  describe "schemas" do
+    test "CREATE SCHEMA, a set inside it, and DROP SCHEMA once it is empty", %{socket: s} do
+      schema = "sch#{System.unique_integer([:positive])}"
+
+      assert C.errors(C.query(s, "CREATE TABLE #{schema}.t (key text)")) == [
+               {"3F000", ~s|schema "#{schema}" does not exist|}
+             ]
+
+      assert C.tags(C.query(s, "CREATE SCHEMA #{schema}")) == ["CREATE SCHEMA"]
+      assert [{"42P06", _}] = C.errors(C.query(s, "CREATE SCHEMA #{schema}"))
+      assert C.tags(C.query(s, "CREATE SCHEMA IF NOT EXISTS #{schema}")) == ["CREATE SCHEMA"]
+      assert C.tags(C.query(s, "DROP SCHEMA #{schema}")) == ["DROP SCHEMA"]
+      assert [{"3F000", _}] = C.errors(C.query(s, "DROP SCHEMA #{schema}"))
+      assert C.tags(C.query(s, "DROP SCHEMA IF EXISTS #{schema}")) == ["DROP SCHEMA"]
+
+      C.query(s, "CREATE SCHEMA #{schema}")
+      assert C.tags(C.query(s, "CREATE TABLE #{schema}.events (key text)")) == ["CREATE TABLE"]
+      assert C.tags(C.query(s, "INSERT INTO #{schema}.events VALUES ('e1')")) == ["INSERT 0 1"]
+
+      assert C.rows(C.query(s, "SELECT key FROM #{schema}.events WHERE key = 'e1'")) == [["e1"]]
+      # The same set, by its whole name.
+      assert C.rows(C.query(s, ~s|SELECT key FROM "#{schema}.events" WHERE key = 'e1'|)) == [
+               ["e1"]
+             ]
+
+      refute Kurwa.Namespace.member?("events", "e1") == {:ok, true}
+
+      eventually(fn -> assert [{"2BP01", _}] = C.errors(C.query(s, "DROP SCHEMA #{schema}")) end)
+    end
+
+    test "a table's one column is key, and CREATE TABLE says so", %{socket: s, set: set} do
+      assert [{"0A000", message}] =
+               C.errors(C.query(s, ~s|CREATE TABLE "#{set}" (column1 varchar NULL)|))
+
+      assert message =~ "name the column key instead of column1"
+
+      assert C.tags(C.query(s, ~s|CREATE TABLE "#{set}" (key text, PRIMARY KEY (key))|)) == [
+               "CREATE TABLE"
+             ]
+    end
+
+    test "CREATE DATABASE points at schemas", %{socket: s} do
+      assert [{"0A000", message}] = C.errors(C.query(s, "CREATE DATABASE other"))
+      assert message =~ "CREATE SCHEMA"
+    end
+  end
+
   describe "startup" do
     test "authenticates, reports parameters and a cancel key, and is idle", %{startup: startup} do
       assert {:auth, 0} = hd(startup)

@@ -15,31 +15,101 @@ defmodule Kurwa.Pg.Catalog do
   """
 
   alias Kurwa.Namespace
+  alias Kurwa.Pg.Catalog.Query
   alias Kurwa.Sql.Parser
 
   require Logger
 
   @doc "The columns a catalog query would return, from its select list."
-  def columns(sql), do: sql |> select_list() |> Enum.map(&{&1, :text})
+  def columns(sql) do
+    with false <- psql?(sql),
+         {:ok, columns, _rows} <- Query.run(sql, Query.ctx("", fn -> [] end, fn -> [] end), []) do
+      columns
+    else
+      _ -> sql |> select_list() |> Enum.map(&{&1, :text})
+    end
+  end
 
   @doc "Answers a catalog query as `{:rows, columns, rows, tag}`."
-  def answer(sql, session) do
-    columns = columns(sql)
-    rows = rows(sql, columns, session)
+  def answer(sql, session, params \\ []) do
+    ctx =
+      Query.ctx(
+        Map.get(session, :user, "kurwadb"),
+        fn -> [Parser.default_table() | known_sets()] end,
+        &schemas/0
+      )
+
+    {columns, rows} =
+      with false <- psql?(sql),
+           {:ok, columns, rows} <- Query.run(sql, ctx, params) do
+        {columns, rows}
+      else
+        _ ->
+          columns = sql |> select_list() |> Enum.map(&{&1, :text})
+          {columns, rows(sql, columns, session)}
+      end
+
     {:rows, columns, rows, "SELECT #{length(rows)}"}
+  end
+
+  # The queries psql sends for \dt, \d and \dn, answered as psql expects.
+  defp psql?(sql) do
+    listing?(sql) or lookup?(sql) or schemas?(sql) or
+      (sql =~ ~r/FROM pg_catalog\.pg_class c\b/ and sql =~ ~r/\bc\.oid = '\d+'/) or
+      (sql =~ "pg_catalog.pg_attribute a" and sql =~ ~r/\ba\.attrelid = '\d+'/)
+  end
+
+  defp schemas do
+    {:ok, schemas} = Kurwa.Registry.schemas()
+    schemas
   end
 
   # \dt [pattern]: one row per set.
   defp rows(sql, _columns, session) when is_binary(sql) do
     cond do
       listing?(sql) ->
-        for name <- matching(sql), do: ["public", name, "table", session.user]
+        for name <- matching(sql),
+            {schema, table} = split(name),
+            do: [schema, table, "table", session.user]
 
       lookup?(sql) ->
-        for name <- matching(sql), do: [Integer.to_string(oid(name)), "public", name]
+        for name <- matching(sql),
+            {schema, table} = split(name),
+            do: [Integer.to_string(oid(name)), schema, table]
+
+      schemas?(sql) ->
+        for schema <- matching_schemas(sql), do: [schema, session.user]
 
       true ->
         describe(sql)
+    end
+  end
+
+  # \dn: SELECT n.nspname AS "Name", pg_get_userbyid(n.nspowner) AS "Owner"
+  defp schemas?(sql),
+    do: sql =~ ~r/SELECT\s+n\.nspname AS "Name",\s*pg_catalog\.pg_get_userbyid\(n\.nspowner\)/s
+
+  defp matching_schemas(sql) do
+    {:ok, schemas} = Kurwa.Registry.schemas()
+    names = Enum.uniq(["public" | schemas])
+
+    case Regex.run(~r/nspname OPERATOR\(pg_catalog\.~\) '((?:[^']|'')*)'/, sql) do
+      [_, pattern] -> filter(names, pattern)
+      nil -> names
+    end
+    |> Enum.sort()
+  end
+
+  @doc """
+  A set name as PostgreSQL sees it: `{schema, table}`. A dotted name is a
+  table in a schema; any other is in public.
+  """
+  def split(:default), do: {"public", Parser.default_table()}
+
+  def split(name) do
+    case String.split(name, ".", parts: 2) do
+      [schema, table] -> {schema, table}
+      [table] -> {"public", table}
     end
   end
 
@@ -111,21 +181,31 @@ defmodule Kurwa.Pg.Catalog do
 
   defp row(sql, values), do: Enum.map(select_list(sql), &Map.get(values, &1, ""))
 
-  # psql's pattern is a POSIX regex in `relname OPERATOR(pg_catalog.~) '^(...)$'`.
+  # psql's patterns are POSIX regexes: `relname OPERATOR(pg_catalog.~) '^(...)$'`
+  # for the table, and the same on nspname when the pattern names a schema.
   defp matching(sql) do
     names = [Parser.default_table() | known_sets()]
 
-    case Regex.run(~r/relname OPERATOR\(pg_catalog\.~\) '((?:[^']|'')*)'/, sql) do
-      [_, pattern] ->
-        case Regex.compile(String.replace(pattern, "''", "'")) do
-          {:ok, regex} -> Enum.filter(names, &Regex.match?(regex, &1))
-          {:error, _} -> []
-        end
+    names =
+      case Regex.run(~r/relname OPERATOR\(pg_catalog\.~\) '((?:[^']|'')*)'/, sql) do
+        [_, pattern] -> Enum.filter(names, &(&1 |> split() |> elem(1) |> matches?(pattern)))
+        nil -> names
+      end
 
-      nil ->
-        names
+    case Regex.run(~r/nspname OPERATOR\(pg_catalog\.~\) '((?:[^']|'')*)'/, sql) do
+      [_, pattern] -> Enum.filter(names, &(&1 |> split() |> elem(0) |> matches?(pattern)))
+      nil -> names
     end
-    |> Enum.sort()
+    |> Enum.sort_by(&split/1)
+  end
+
+  defp filter(names, pattern), do: Enum.filter(names, &matches?(&1, pattern))
+
+  defp matches?(name, pattern) do
+    case Regex.compile(String.replace(pattern, "''", "'")) do
+      {:ok, regex} -> Regex.match?(regex, name)
+      {:error, _} -> false
+    end
   end
 
   @doc "A stable oid for a set, so psql's follow-up queries can name it."

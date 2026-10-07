@@ -317,6 +317,9 @@ defmodule Kurwa.Sql.Procedural do
 
   defp one([{:ident, e} | rest]) when e in ~w(exec execute), do: exec(rest)
 
+  defp one([{:ident, "create"}, {:ident, kind} | _] = tokens) when kind in ~w(table schema),
+    do: data(tokens)
+
   defp one([{:ident, "create"} | _]),
     do:
       error(

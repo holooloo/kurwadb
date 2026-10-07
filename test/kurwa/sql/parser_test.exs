@@ -27,7 +27,11 @@ defmodule Kurwa.Sql.ParserTest do
     assert {:select, %{from: :default}} = one("SELECT key FROM kurwa WHERE key = 'a'")
     assert {:select, %{from: nil}} = one("SELECT 1")
     assert {:select, %{from: "seen"}} = one("SELECT key FROM public.seen WHERE key = 'a'")
-    assert {:error, "3F000", _} = Parser.parse("SELECT key FROM other.seen WHERE key = 'a'")
+
+    assert {:ok, [select: %{from: "other.seen"}]} =
+             Parser.parse("SELECT key FROM other.seen WHERE key = 'a'")
+
+    assert {:error, "3F000", _} = Parser.parse("INSERT INTO pg_toast.seen VALUES ('a')")
   end
 
   test "quoted identifiers carry the characters a set name may have" do

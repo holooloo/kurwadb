@@ -17,6 +17,8 @@ services:
     environment:
       # The password for SQL Server, MySQL and PostgreSQL logins (any user name).
       KURWA_AUTH_TOKEN: ${KURWA_AUTH_TOKEN:?set KURWA_AUTH_TOKEN in .env}
+      # debug logs every query the SQL frontends receive
+      KURWA_LOG_LEVEL: ${KURWA_LOG_LEVEL:-notice}
     ports:
       - "${KURWA_HOST_MSSQL:-1433}:1433"
       - "${KURWA_HOST_PG:-25432}:5432"

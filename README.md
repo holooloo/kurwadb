@@ -168,6 +168,15 @@ SELECT kurwa_ttl('seen', 'session:9'), kurwa_count();
 \dt                                                       -- sets, as tables
 ```
 
+Schemas are namespaces for sets: `CREATE SCHEMA analytics`, then
+`analytics.events` is the set named `analytics.events` - so a set made over
+HTTP with a dot in its name shows up inside a schema. `DROP SCHEMA` works while
+no set in it has keys. There is one database, `kurwadb`. The catalogs are
+modelled well enough for GUI tools: DBeaver's navigator lists schemas, tables
+and the `key` column (`test/drivers/JdbcCheck.java` runs its queries through
+pgjdbc), and a table designer that names the column anything but `key` is told
+so at `CREATE TABLE`.
+
 Without a `WHERE key`, a `SELECT` or `DELETE` is refused with the reason: it
 would be a scan. Simple and extended protocol, text and binary formats, so
 prepared statements in psycopg, node-postgres and the like work; the scripts in

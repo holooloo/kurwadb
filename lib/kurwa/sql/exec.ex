@@ -27,6 +27,7 @@ defmodule Kurwa.Sql.Exec do
   alias Kurwa.Key
   alias Kurwa.Namespace
   alias Kurwa.Record
+  alias Kurwa.Sql.Parser
 
   require Logger
 
@@ -130,8 +131,48 @@ defmodule Kurwa.Sql.Exec do
     returning(returning, present, set, params, session, "DELETE #{length(present)}")
   end
 
+  defp execute({:create_schema, schema, if_not_exists}, _params, _session) do
+    cond do
+      schema not in known_schemas() ->
+        ok!(Kurwa.Registry.register_schema(schema))
+
+      not if_not_exists ->
+        fail("42P06", "schema \"#{schema}\" already exists")
+
+      true ->
+        notice("schema \"#{schema}\" already exists, skipping")
+    end
+
+    {:command, "CREATE SCHEMA"}
+  end
+
+  defp execute({:drop_schema, schema, if_exists}, _params, _session) do
+    cond do
+      schema in Parser.default_schemas() or schema not in known_schemas() ->
+        if schema in Parser.default_schemas() or not if_exists,
+          do: fail("3F000", "schema \"#{schema}\" cannot be dropped or does not exist")
+
+      Enum.any?(known_sets(), &String.starts_with?(&1, schema <> ".")) ->
+        fail(
+          "2BP01",
+          "cannot drop schema #{schema} because sets in it hold keys; " <>
+            "kurwa_forget('#{schema}.name') stops listing each of them first"
+        )
+
+      true ->
+        ok!(Kurwa.Registry.forget_schema(schema))
+    end
+
+    {:command, "DROP SCHEMA"}
+  end
+
   defp execute({:create_table, set, if_not_exists}, _params, _session) do
     set = store_set(set)
+
+    with [schema, _] when is_binary(set) <- String.split(to_string(set), ".", parts: 2),
+         false <- schema in known_schemas() do
+      fail("3F000", "schema \"#{schema}\" does not exist")
+    end
 
     cond do
       set == nil ->
@@ -636,6 +677,11 @@ defmodule Kurwa.Sql.Exec do
   defp delete(set, key), do: Namespace.delete(set, key)
 
   defp lookup(set, key), do: Coordinator.lookup(Key.encode(set, key))
+
+  defp known_schemas do
+    {:ok, schemas} = Kurwa.Registry.schemas()
+    Parser.default_schemas() ++ schemas
+  end
 
   defp known_sets do
     case Namespace.list() do

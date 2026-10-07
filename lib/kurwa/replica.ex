@@ -94,7 +94,7 @@ defmodule Kurwa.Replica do
 
   @doc "Set names visible in this node's copy of the registry. See `Kurwa.Registry`."
   @spec local_sets() :: {:ok, [binary()]}
-  def local_sets, do: {:ok, Kurwa.Registry.local()}
+  def local_sets, do: {:ok, Kurwa.Registry.local_names()}
 
   @doc "Every node this one knows about, reachable or not. See `Kurwa.Cluster`."
   @spec members() :: {:ok, [node()]}

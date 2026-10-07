@@ -33,4 +33,8 @@ run "mysql2" node test/drivers/node_mysql2_check.js "$mysql" "$pw"
 run "redis-py" "$py" test/drivers/redis_py_check.py "$resp"
 run "pymongo" "$py" test/drivers/pymongo_check.py "mongodb://u:$pw@$host:$mongo/?authSource=admin"
 run "node mongodb" node test/drivers/node_mongodb_check.js "mongodb://u:$pw@$host:$mongo/?authSource=admin"
+if [ -n "${PGJDBC:-}" ]; then
+  # PGJDBC: postgresql.jar; JdbcCheck.class compiled next to it (see the file)
+  run "pgjdbc" "${JAVA:-java}" -cp "$PGJDBC:$(dirname "$PGJDBC")" JdbcCheck "$host:$pg"
+fi
 echo "all driver checks passed against $host"

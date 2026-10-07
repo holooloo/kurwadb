@@ -29,10 +29,12 @@ defmodule Kurwa.Sql.Parser do
   alias Kurwa.Sql.Lexer
 
   @default_table "kurwa"
+  @default_schemas ~w(public dbo kurwadb)
+  @system_schemas ~w(pg_catalog information_schema sys pg_toast)
   @tsql_starts ~w(select insert delete update set use begin commit rollback if declare exec execute print save create drop merge)
   # A query is a catalog query when it reads a catalog table - not when it
   # merely calls pg_catalog.version(), which drivers do on their own.
-  @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|sys\.|master\.|pg_(class|namespace|attribute|type|database|roles|settings|index|proc|description|am|tables|indexes|views|matviews|extension|enum|range|collation|constraint|inherits)\b)/i
+  @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|sys\.|master\.|pg_[a-z_]+\b)/i
 
   @type error :: {:error, sqlstate :: binary(), message :: binary()}
 
@@ -183,16 +185,48 @@ defmodule Kurwa.Sql.Parser do
         rest -> {false, rest}
       end
 
-    with {:ok, table, _columns} <- table(rest), do: {:ok, {:create_table, table, if_not_exists}}
+    with :ok <- key_column_only(rest),
+         {:ok, table, _columns} <- table(rest),
+         do: {:ok, {:create_table, table, if_not_exists}}
   end
 
-  defp statement([{:ident, "drop"}, {:ident, "table"} | _]) do
-    error(
-      "0A000",
-      "DROP TABLE would delete a set's keys, and there is no scan to find them; " <>
-        "SELECT kurwa_forget('name') stops listing a set and leaves its keys"
-    )
+  defp statement([{:ident, "create"}, {:ident, "schema"} | rest]) do
+    {if_not_exists, rest} =
+      case rest do
+        [{:ident, "if"}, {:ident, "not"}, {:ident, "exists"} | rest] -> {true, rest}
+        rest -> {false, rest}
+      end
+
+    with {:ok, schema, rest} <- schema_name(rest) do
+      case rest do
+        [] -> {:ok, {:create_schema, schema, if_not_exists}}
+        [{:ident, "authorization"}, {_, _}] -> {:ok, {:create_schema, schema, if_not_exists}}
+        [token | _] -> unexpected(token)
+      end
+    end
   end
+
+  defp statement([{:ident, "drop"}, {:ident, "schema"} | rest]) do
+    {if_exists, rest} =
+      case rest do
+        [{:ident, "if"}, {:ident, "exists"} | rest] -> {true, rest}
+        rest -> {false, rest}
+      end
+
+    with {:ok, schema, rest} <- schema_name(rest) do
+      case rest do
+        [] -> {:ok, {:drop_schema, schema, if_exists}}
+        [{:ident, "restrict"}] -> {:ok, {:drop_schema, schema, if_exists}}
+        [{:ident, "cascade"}] -> drop_table_error()
+        [token | _] -> unexpected(token)
+      end
+    end
+  end
+
+  defp statement([{:ident, "drop"}, {:ident, "table"} | _]), do: drop_table_error()
+
+  defp statement([{:ident, "create"}, {:ident, "database"} | _]),
+    do: error("0A000", "kurwadb is one database; CREATE SCHEMA makes a namespace for sets")
 
   defp statement([{:ident, "update"} | _]),
     do: error("0A000", "a key has no columns to update: delete it and insert the new one")
@@ -573,7 +607,12 @@ defmodule Kurwa.Sql.Parser do
     end
   end
 
-  # Niladic functions the SQL standard spells without parentheses.
+  # Niladic functions the SQL standard spells without parentheses - and
+  # PostgreSQL accepts current_schema() with them.
+  defp primary([{:ident, name}, {:op, "("}, {:op, ")"} | rest])
+       when name in ~w(current_user session_user current_schema current_catalog user),
+       do: {:ok, {:call, name, []}, rest}
+
   defp primary([{:ident, name} | rest])
        when name in ~w(current_user session_user current_schema current_catalog user),
        do: {:ok, {:call, name, []}, rest}
@@ -614,6 +653,68 @@ defmodule Kurwa.Sql.Parser do
     end
   end
 
+  # A set is one column, key text (and ttl, which is not stored as a column).
+  # A table designer's column1 would be accepted here and fail on the first
+  # INSERT, so it fails here instead, saying what to name it.
+  defp key_column_only(tokens) do
+    case Enum.drop_while(tokens, &(&1 != {:op, "("})) do
+      [{:op, "("} | _] = definition ->
+        names =
+          definition
+          |> drop_parens_keep()
+          |> Enum.map(&List.first/1)
+          |> Enum.reject(
+            &(&1 in [
+                nil
+                | Enum.map(~w(primary constraint unique check foreign), fn w -> {:ident, w} end)
+              ])
+          )
+          |> Enum.map(fn {_, name} -> name end)
+
+        case Enum.reject(names, &(&1 in ~w(key ttl))) do
+          [] ->
+            :ok
+
+          [name | _] ->
+            error(
+              "0A000",
+              "a set has one column, key text; name the column key instead of #{name}: " <>
+                "CREATE TABLE t (key text)"
+            )
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  # The top-level comma-separated items inside the first parentheses.
+  defp drop_parens_keep([{:op, "("} | rest]), do: items_in(rest, 0, [], [])
+
+  defp items_in([], _depth, current, acc), do: Enum.reverse([Enum.reverse(current) | acc])
+
+  defp items_in([{:op, ")"} | _], 0, current, acc),
+    do: Enum.reverse([Enum.reverse(current) | acc])
+
+  defp items_in([{:op, ","} | rest], 0, current, acc),
+    do: items_in(rest, 0, [], [Enum.reverse(current) | acc])
+
+  defp items_in([{:op, "("} = t | rest], d, current, acc),
+    do: items_in(rest, d + 1, [t | current], acc)
+
+  defp items_in([{:op, ")"} = t | rest], d, current, acc),
+    do: items_in(rest, d - 1, [t | current], acc)
+
+  defp items_in([t | rest], d, current, acc), do: items_in(rest, d, [t | current], acc)
+
+  defp drop_table_error do
+    error(
+      "0A000",
+      "DROP TABLE would delete a set's keys, and there is no scan to find them; " <>
+        "SELECT kurwa_forget('name') stops listing a set and leaves its keys"
+    )
+  end
+
   # ------------------------------------------------------------------- tables
 
   # schema.table is accepted for the schema psql and drivers assume.
@@ -622,10 +723,18 @@ defmodule Kurwa.Sql.Parser do
        when d in [:ident, :qident] and s in [:ident, :qident] and t in [:ident, :qident],
        do: table([schema, {:op, "."}, name | rest])
 
-  # public (PostgreSQL's) and dbo (SQL Server's) are where every set is.
+  # public (PostgreSQL's) and dbo (SQL Server's) are the default schema, and
+  # kurwadb (MySQL's database) names it too: their tables are plain sets. Any
+  # other schema is part of the set's name - analytics.events is the set
+  # "analytics.events" - so a set made over HTTP with a dot in its name shows
+  # up in SQL inside a schema.
   defp table([{s, schema}, {:op, "."}, {t, name} | rest])
        when s in [:ident, :qident] and t in [:ident, :qident] do
-    if schema in ["public", "dbo"], do: table([{t, name} | rest]), else: no_schema(schema)
+    cond do
+      schema in @default_schemas -> table([{t, name} | rest])
+      schema in @system_schemas -> no_schema(schema)
+      true -> table([{:qident, schema <> "." <> name} | rest])
+    end
   end
 
   defp table([{type, name} | rest]) when type in [:ident, :qident] do
@@ -662,7 +771,26 @@ defmodule Kurwa.Sql.Parser do
   defp drop_parens([], _depth), do: []
 
   defp no_schema(schema),
-    do: error("3F000", "schema \"#{schema}\" does not exist: every set is in public")
+    do: error("3F000", "schema \"#{schema}\" holds no sets: it is a system schema")
+
+  defp schema_name([{type, name} | rest]) when type in [:ident, :qident] do
+    cond do
+      name in @default_schemas or name in @system_schemas ->
+        {:ok, name, rest}
+
+      Kurwa.Key.valid_name?(name) and not String.contains?(name, ".") ->
+        {:ok, name, rest}
+
+      true ->
+        error("42602", "\"#{name}\" is not a valid schema name")
+    end
+  end
+
+  defp schema_name([token | _]), do: unexpected(token)
+  defp schema_name([]), do: error("42601", "expected a schema name")
+
+  @doc "Schemas that are the default one: their tables are plain set names."
+  def default_schemas, do: @default_schemas
 
   # ---------------------------------------------------------------- utilities
 
@@ -693,6 +821,8 @@ defmodule Kurwa.Sql.Parser do
   defp text({:number, n}), do: to_string(n)
   defp text({:param, n}), do: "$#{n}"
   defp text({:op, op}), do: op
+  defp text({:named, name}), do: "@" <> name
+  defp text({_kind, value}), do: to_string(value)
 
   defp finished([]), do: :ok
   defp finished([token | _]), do: unexpected(token)

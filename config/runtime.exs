@@ -59,4 +59,9 @@ if config_env() != :test do
     auth_token: System.get_env("KURWA_AUTH_TOKEN"),
     tombstone_ttl: int.("KURWA_TOMBSTONE_TTL_MS", 86_400_000),
     seeds: seeds
+
+  # debug logs every query the SQL frontends receive.
+  if level = System.get_env("KURWA_LOG_LEVEL") do
+    config :logger, level: String.to_existing_atom(level)
+  end
 end

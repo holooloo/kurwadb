@@ -332,6 +332,8 @@ defmodule Kurwa.Pg.Server do
   # ------------------------------------------------------------- simple query
 
   defp handle({:query, sql}, socket, state) do
+    Logger.debug("kurwadb pg query: #{sql}")
+
     state =
       case Parser.parse(sql) do
         {:ok, statements} ->
@@ -363,6 +365,8 @@ defmodule Kurwa.Pg.Server do
   defp handle(:flush, _socket, state), do: state
 
   defp handle({:parse, name, sql, oids}, socket, state) do
+    Logger.debug("kurwadb pg parse: #{sql}")
+
     with :ok <- free_statement(state, name),
          {:ok, statement} <- one_statement(sql) do
       {inferred, columns} = describe(statement)
@@ -538,7 +542,7 @@ defmodule Kurwa.Pg.Server do
     else
       result =
         case Exec.run(statement, params, state.session) do
-          {:catalog, sql} -> Catalog.answer(sql, state.session)
+          {:catalog, sql} -> Catalog.answer(sql, state.session, params)
           other -> other
         end
 

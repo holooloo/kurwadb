@@ -234,11 +234,14 @@ defmodule Kurwa.Mssql.Server do
     case recv(conn) do
       {:ok, :sql_batch, payload, conn} ->
         {_descriptor, text} = Tds.all_headers(payload)
-        {tokens, session} = batch(Tds.utf8(text), %{}, session, :done)
+        sql = Tds.utf8(text)
+        Logger.debug("kurwadb mssql batch: #{sql}")
+        {tokens, session} = guarded(sql, session, fn -> batch(sql, %{}, session, :done) end)
         conn |> send_message(:reply, tokens) |> commands(session)
 
       {:ok, :rpc, payload, conn} ->
-        {tokens, session} = rpcs(payload, session)
+        Logger.debug("kurwadb mssql rpc: #{Base.encode16(payload)}")
+        {tokens, session} = guarded("RPC", session, fn -> rpcs(payload, session) end)
         conn |> send_message(:reply, tokens) |> commands(session)
 
       {:ok, :transaction_manager, payload, conn} ->
@@ -261,6 +264,22 @@ defmodule Kurwa.Mssql.Server do
       :closed ->
         :ok
     end
+  end
+
+  # A request kurwadb fails on is answered with an error, never by dropping the
+  # connection: SSMS and friends treat a dropped connection as "cannot connect".
+  defp guarded(what, session, fun) do
+    fun.()
+  rescue
+    e ->
+      Logger.error(
+        "kurwadb mssql: #{Exception.format(:error, e, __STACKTRACE__)}\nwhile running: #{what}"
+      )
+
+      {[
+         error("XX000", "kurwadb failed on this request: #{Exception.message(e)}"),
+         Tds.done(:done, error: true)
+       ], session}
   end
 
   # A batch: the procedural interpreter runs it - a batch may DECLARE, IF and

@@ -77,7 +77,12 @@ defmodule Kurwa.Registry do
 
   @doc "Set names visible in this node's copy of the registry."
   @spec local() :: [binary()]
-  def local do
+  def local, do: Enum.reject(local_names(), &schema_mark?/1)
+
+  @doc false
+  # The registry as stored here, schema records included: what other nodes ask
+  # for when they list.
+  def local_names do
     Store.fold_system([], fn record, acc ->
       with true <- Record.member?(record),
            {:ok, name} <- Key.registry_name(Record.key(record)) do
@@ -97,6 +102,51 @@ defmodule Kurwa.Registry do
   """
   @spec list(keyword()) :: {:ok, %{sets: [binary()], unreachable: map()}}
   def list(opts \\ []) do
+    {:ok, %{sets: names} = listing} = names(opts)
+    {:ok, %{listing | sets: Enum.reject(names, &schema_mark?/1)}}
+  end
+
+  # A schema created with CREATE SCHEMA and holding no sets yet is recorded as
+  # a registry entry with this prefix. A slash cannot start a set name, so the
+  # two never collide, and schemas replicate and repair like set names do.
+  @schema_mark "/"
+
+  defp schema_mark?(name), do: String.starts_with?(name, @schema_mark)
+
+  @doc "Records an empty schema, so it is listed before it holds a set."
+  @spec register_schema(binary()) :: :ok | {:error, term()}
+  def register_schema(schema) when is_binary(schema) do
+    name = @schema_mark <> schema
+    :ets.insert(@table, {name})
+    Coordinator.add(Key.registry_key(name))
+  end
+
+  @doc "Drops the record of a schema made by `register_schema/1`."
+  @spec forget_schema(binary()) :: :ok | {:error, term()}
+  def forget_schema(schema) when is_binary(schema), do: forget(@schema_mark <> schema)
+
+  @doc """
+  Every schema: those created and recorded, and the first part of every
+  dotted set name - `analytics.events` is the set `events` in `analytics`.
+  """
+  @spec schemas(keyword()) :: {:ok, [binary()]}
+  def schemas(opts \\ []) do
+    {:ok, %{sets: names}} = names(opts)
+
+    schemas =
+      for name <- names, uniq: true do
+        if schema_mark?(name),
+          do: String.replace_prefix(name, @schema_mark, ""),
+          else: name |> String.split(".", parts: 2) |> schema_of()
+      end
+
+    {:ok, schemas |> Enum.reject(&is_nil/1) |> Enum.sort()}
+  end
+
+  defp schema_of([schema, _table]), do: schema
+  defp schema_of([_table]), do: nil
+
+  defp names(opts) do
     timeout = Keyword.get(opts, :timeout, Config.request_timeout())
     nodes = Cluster.members()
 
@@ -164,7 +214,7 @@ defmodule Kurwa.Registry do
 
   defp remote_local(node, timeout) do
     if node == node() do
-      {:ok, local()}
+      {:ok, local_names()}
     else
       :erpc.call(node, Kurwa.Replica, :local_sets, [], timeout)
     end
