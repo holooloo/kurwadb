@@ -16,3 +16,6 @@ erl_crash.dump
 # runtime data (WAL + snapshots)
 /data/
 /tmp/
+
+# deployment secrets
+/deploy/.env

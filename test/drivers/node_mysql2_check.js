@@ -13,7 +13,7 @@ const check = (label, got, want) => {
 
 (async () => {
   const conn = await mysql.createConnection({
-    host: "127.0.0.1", port, user: "node", password: process.argv[3] || "", database: "kurwadb",
+    host: process.env.KURWA_HOST || "127.0.0.1", port, user: "node", password: process.argv[3] || "", database: "kurwadb",
   });
 
   let [r] = await conn.query("INSERT INTO nset VALUES (?), (?)", ["n1", "n2"]);

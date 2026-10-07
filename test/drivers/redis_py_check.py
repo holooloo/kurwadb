@@ -2,7 +2,8 @@
 
     python test/drivers/redis_py_check.py 6399
 """
-import sys
+import os, sys
+HOST = os.environ.get("KURWA_HOST", "127.0.0.1")
 import redis
 
 port = int(sys.argv[1])
@@ -15,7 +16,7 @@ def check(label, got, want):
     checks += 1
 
 for protocol in (2, 3):
-    r = redis.Redis(port=port, protocol=protocol, decode_responses=True)
+    r = redis.Redis(host=HOST, port=port, password=os.environ.get("KURWA_PASSWORD"), protocol=protocol, decode_responses=True)
     p = f"[resp{protocol}] "
     key, s = f"py:{protocol}:once", f"py:{protocol}:seen"
     r.delete(key)
@@ -43,7 +44,7 @@ for protocol in (2, 3):
     check(p + "plain pipeline", sum(pipe.execute()), 100)
 
     # WATCH, as applications use it: optimistic, with WatchError on a change.
-    other = redis.Redis(port=port, protocol=protocol, decode_responses=True)
+    other = redis.Redis(host=HOST, port=port, password=os.environ.get("KURWA_PASSWORD"), protocol=protocol, decode_responses=True)
     w = f"py:{protocol}:watched"
     r.set(w, 1)
     with r.pipeline() as pipe:

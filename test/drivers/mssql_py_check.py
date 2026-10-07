@@ -3,7 +3,8 @@ pyodbc with Microsoft's ODBC Driver 18 when it is installed.
 
     python test/drivers/mssql_py_check.py 14399 [password]
 """
-import sys
+import os, sys
+HOST = os.environ.get("KURWA_HOST", "127.0.0.1")
 
 port = int(sys.argv[1])
 password = sys.argv[2] if len(sys.argv) > 2 else "x"
@@ -41,7 +42,7 @@ def exercise(name, conn, param):
     check(f"{name} usable after error", cur.fetchone()[0], 1)
 
 import pymssql
-conn = pymssql.connect(server="127.0.0.1", port=port, user="sa", password=password, database="kurwadb", autocommit=True)
+conn = pymssql.connect(server=HOST, port=port, user="sa", password=password, database="kurwadb", autocommit=True)
 exercise("pymssql", conn, "%s")
 
 # A stored procedure by name, when the node has the consume procedure loaded.
@@ -66,7 +67,7 @@ except ImportError:
 
 if drivers:
     for encrypt in ("yes", "no", "strict"):
-        dsn = (f"DRIVER={{{drivers[-1]}}};SERVER=127.0.0.1,{port};DATABASE=kurwadb;UID=sa;PWD={password};"
+        dsn = (f"DRIVER={{{drivers[-1]}}};SERVER={HOST},{port};DATABASE=kurwadb;UID=sa;PWD={password};"
                f"Encrypt={encrypt};TrustServerCertificate=yes")
         try:
             conn = pyodbc.connect(dsn, autocommit=False)

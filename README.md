@@ -76,6 +76,24 @@ curl      localhost:4040/count
 curl      localhost:4040/info
 ```
 
+### Docker
+
+One node with every frontend on, the on-disk engine, data on a volume and the
+procedures from `deploy/procedures`:
+
+```sh
+cd deploy
+cp .env.example .env             # set KURWA_AUTH_TOKEN; move ports if taken
+docker compose up -d --build
+```
+
+The token is the password for every protocol, with any user name. Host ports
+default to 1433 for SQL Server and the 2xxxx range for the rest, out of the
+way of a developer machine's own databases. `docker build --target test .`
+runs the suite against both engines inside the build, Rust NIF included, and
+`deploy/smoke.sh HOST` runs every driver check in `test/drivers` against a
+running container over the network.
+
 ## HTTP API
 
 | | |

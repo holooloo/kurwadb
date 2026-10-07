@@ -1,0 +1,32 @@
+# One kurwadb node for a LAN. Host ports come from .env next to this file
+# (see .env.example), so they can be moved off whatever the host already uses.
+#
+#     docker compose up -d --build
+name: kurwadb
+
+services:
+  kurwadb:
+    build:
+      context: ..
+      target: runtime
+    image: kurwadb:latest
+    container_name: kurwadb
+    # The node name is kurwadb@<hostname>; a fixed one survives re-creation.
+    hostname: kurwadb
+    restart: unless-stopped
+    environment:
+      # The password for SQL Server, MySQL and PostgreSQL logins (any user name).
+      KURWA_AUTH_TOKEN: ${KURWA_AUTH_TOKEN:?set KURWA_AUTH_TOKEN in .env}
+    ports:
+      - "${KURWA_HOST_MSSQL:-1433}:1433"
+      - "${KURWA_HOST_PG:-25432}:5432"
+      - "${KURWA_HOST_MYSQL:-23306}:3306"
+      - "${KURWA_HOST_RESP:-26379}:6379"
+      - "${KURWA_HOST_MONGO:-27117}:27017"
+      - "${KURWA_HOST_HTTP:-24040}:4040"
+    volumes:
+      - kurwadb-data:/data
+      - ./procedures:/procedures:ro
+
+volumes:
+  kurwadb-data:

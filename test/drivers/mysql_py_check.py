@@ -2,7 +2,8 @@
 
     python test/drivers/mysql_py_check.py 3399 [password]
 """
-import sys
+import os, sys
+HOST = os.environ.get("KURWA_HOST", "127.0.0.1")
 import pymysql
 import mysql.connector
 
@@ -17,7 +18,7 @@ def check(label, got, want):
     checks += 1
 
 # PyMySQL: the text protocol, parameters interpolated client-side.
-conn = pymysql.connect(host="127.0.0.1", port=port, user="py", password=password, database="kurwadb", autocommit=True)
+conn = pymysql.connect(host=HOST, port=port, user="py", password=password, database="kurwadb", autocommit=True)
 with conn.cursor() as cur:
     check("insert", cur.execute("INSERT INTO myset VALUES (%s), (%s)", ("a", "b")), 2)
     cur.execute("SELECT `key` FROM myset WHERE `key` IN (%s, %s, %s)", ("a", "b", "zz"))
@@ -37,7 +38,7 @@ with conn.cursor() as cur:
 conn.close()
 
 # Not autocommit: PyMySQL sends SET AUTOCOMMIT = 0, and commit/rollback.
-conn = pymysql.connect(host="127.0.0.1", port=port, user="py", password=password, database="kurwadb")
+conn = pymysql.connect(host=HOST, port=port, user="py", password=password, database="kurwadb")
 with conn.cursor() as cur:
     cur.execute("INSERT INTO myset VALUES (%s)", ("t",))
 conn.commit()
@@ -47,7 +48,7 @@ conn.close()
 # Connector/Python, pure and with prepared statements: the binary protocol.
 for pure in (True, False):
     try:
-        cnx = mysql.connector.connect(host="127.0.0.1", port=port, user="py", password=password,
+        cnx = mysql.connector.connect(host=HOST, port=port, user="py", password=password,
                                       database="kurwadb", use_pure=pure, autocommit=True)
     except Exception as e:
         if not pure:

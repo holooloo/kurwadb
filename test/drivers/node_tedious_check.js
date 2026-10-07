@@ -13,7 +13,7 @@ const check = (label, got, want) => {
 };
 
 const conn = new Connection({
-  server: "127.0.0.1",
+  server: process.env.KURWA_HOST || "127.0.0.1",
   authentication: { type: "default", options: { userName: "sa", password: process.argv[3] || "x" } },
   options: { port, database: "kurwadb", encrypt: true, trustServerCertificate: true, rowCollectionOnDone: true },
 });

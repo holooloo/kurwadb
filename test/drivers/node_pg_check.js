@@ -15,7 +15,7 @@ const check = (label, got, want) => {
   // PGPASSWORD and PGSSL=1 exercise SCRAM and TLS: node-postgres has its own
   // SCRAM, separate from libpq's.
   const client = new Client({
-    host: "127.0.0.1", port, user: "node", database: "kurwadb",
+    host: process.env.KURWA_HOST || "127.0.0.1", port, user: "node", database: "kurwadb",
     password: process.env.PGPASSWORD,
     ssl: process.env.PGSSL ? { rejectUnauthorized: false } : false,
   });

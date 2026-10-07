@@ -1,0 +1,10 @@
+_build
+deps
+data
+tmp
+docs
+bench
+cover
+erl_crash.dump
+native/*/target
+.git
