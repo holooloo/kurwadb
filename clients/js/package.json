@@ -1,0 +1,21 @@
+{
+  "name": "kurwadb",
+  "version": "0.1.0",
+  "description": "kurwadb client for Node.js: cluster-aware, pipelined, over RESP3",
+  "type": "module",
+  "main": "./src/index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "files": ["src", "index.d.ts", "README.md"],
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "keywords": ["kurwadb", "set", "membership", "idempotency", "dedup"],
+  "license": "MIT"
+}

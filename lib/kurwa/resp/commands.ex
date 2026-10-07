@@ -33,6 +33,10 @@ defmodule Kurwa.Resp.Commands do
   runs nothing, if a watched key's version changed since the WATCH. The check
   and the commands are two steps, so a change landing between them is not
   seen; the retry loop that Redis clients build on WATCH works.
+
+  `KURWA.NODES` is kurwadb's own: `[node, host, port, up]` for every member,
+  with the address clients reach its RESP frontend at. kurwadb's clients
+  (`clients/js`) discover the cluster with it.
   """
 
   alias Kurwa.Coordinator
@@ -121,6 +125,22 @@ defmodule Kurwa.Resp.Commands do
     """
 
     {info, s}
+  end
+
+  # The cluster as a client sees it: [node, host, port, up] per member, with
+  # the address a client uses for each node's RESP frontend. Asked of every
+  # member, since only a node knows its own published address.
+  defp dispatch("KURWA.NODES", [], s) do
+    nodes =
+      Kurwa.Cluster.members()
+      |> Task.async_stream(&node_entry/1, timeout: 2_000, on_timeout: :kill_task)
+      |> Enum.zip(Kurwa.Cluster.members())
+      |> Enum.map(fn
+        {{:ok, entry}, _node} -> entry
+        {_, node} -> [to_string(node), host_of(node), Kurwa.Config.get(:resp_port), false]
+      end)
+
+    {nodes, s}
   end
 
   defp dispatch("DBSIZE", [], s), do: {ok!(Kurwa.count()).approximate, s}
@@ -298,6 +318,44 @@ defmodule Kurwa.Resp.Commands do
   end
 
   # -------------------------------------------------------------------- helpers
+
+  @doc """
+  Where clients reach this node's RESP frontend: the published host and port
+  when configured (`KURWA_PUBLIC_HOST`, `KURWA_PUBLIC_PORTS`), else the host
+  in the node name and the listening port.
+  """
+  def resp_endpoint do
+    public_port = Map.get(Kurwa.Config.get(:public_ports) || %{}, "resp")
+
+    host =
+      case Kurwa.Config.get(:public_host) do
+        host when is_binary(host) and host != "" and public_port != nil -> host
+        _ -> host_of(node())
+      end
+
+    {host, public_port || Kurwa.Config.get(:resp_port)}
+  end
+
+  defp node_entry(node) do
+    {host, port} =
+      if node == node(),
+        do: resp_endpoint(),
+        else: :erpc.call(node, __MODULE__, :resp_endpoint, [], 1_000)
+
+    [to_string(node), host, port, true]
+  rescue
+    _ -> [to_string(node), host_of(node), Kurwa.Config.get(:resp_port), false]
+  catch
+    _, _ -> [to_string(node), host_of(node), Kurwa.Config.get(:resp_port), false]
+  end
+
+  defp host_of(node) do
+    case node |> to_string() |> String.split("@", parts: 2) do
+      [_, "nohost"] -> "127.0.0.1"
+      [_, host] -> host
+      _ -> "127.0.0.1"
+    end
+  end
 
   defp hello(s) do
     {:map,

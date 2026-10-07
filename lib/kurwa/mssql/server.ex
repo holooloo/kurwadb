@@ -32,7 +32,7 @@ defmodule Kurwa.Mssql.Server do
 
   use ThousandIsland.Handler
 
-  alias Kurwa.Mssql.{Tds, Transport}
+  alias Kurwa.Mssql.{Ssms, Tds, Transport}
   alias Kurwa.Sql.Procedural
 
   require Logger
@@ -162,7 +162,7 @@ defmodule Kurwa.Mssql.Server do
       token != nil and not Plug.Crypto.secure_compare(login.password, to_string(token)) ->
         refuse(conn, 18456, "Login failed for user '#{login.user}'.")
 
-      login.database not in ["", @database, "master"] ->
+      login.database not in ["" | Ssms.databases()] ->
         refuse(
           conn,
           4060,
@@ -173,9 +173,11 @@ defmodule Kurwa.Mssql.Server do
         size = if login.packet_size in 512..32_767, do: login.packet_size, else: 4096
         conn = %{conn | size: size}
 
+        database = if login.database == "", do: @database, else: login.database
+
         tokens = [
-          Tds.envchange(1, @database, "master"),
-          Tds.notice(:info, 5701, 0, "Changed database context to '#{@database}'."),
+          Tds.envchange(1, database, "master"),
+          Tds.notice(:info, 5701, 0, "Changed database context to '#{database}'."),
           Tds.envchange(:collation),
           Tds.envchange(2, "us_english", ""),
           Tds.notice(:info, 5703, 0, "Changed language setting to us_english."),
@@ -199,12 +201,13 @@ defmodule Kurwa.Mssql.Server do
 
   defp session(login) do
     Kurwa.Metrics.identify(user: login.user, app: login.app)
+    database = if login.database in Ssms.databases(), do: login.database, else: @database
     spid = 51 + rem(System.unique_integer([:positive]), 30_000)
 
     %{
       user: login.user,
       app: login.app,
-      database: @database,
+      database: database,
       pid: spid,
       settings: %{},
       sysvars: %{},
@@ -241,7 +244,7 @@ defmodule Kurwa.Mssql.Server do
 
         {tokens, session} =
           Kurwa.Metrics.measure(:mssql, fn ->
-            guarded(sql, session, fn -> batch(sql, %{}, session, :done) end)
+            guarded(sql, session, fn -> sql_batch(sql, session) end)
           end)
 
         conn |> send_message(:reply, tokens) |> commands(session)
@@ -275,6 +278,46 @@ defmodule Kurwa.Mssql.Server do
 
       :closed ->
         :ok
+    end
+  end
+
+  # A batch: a leading USE switches the session's database, then the rest is
+  # either one of the catalog queries SSMS sends (Kurwa.Mssql.Ssms) or SQL
+  # for the interpreter.
+  defp sql_batch(sql, session) do
+    case Regex.run(~r/^\s*use\s+(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))\s*;?/i, sql) do
+      [whole | names] ->
+        db = names |> Enum.reject(&(&1 == "")) |> hd()
+        rest = binary_part(sql, byte_size(whole), byte_size(sql) - byte_size(whole))
+        more? = String.trim(rest) != ""
+
+        if db in Ssms.databases() do
+          use_tokens = [
+            Tds.envchange(1, db, session.database),
+            Tds.notice(:info, 5701, 0, "Changed database context to '#{db}'."),
+            Tds.done(:done, more: more?)
+          ]
+
+          session = %{session | database: db}
+
+          if more? do
+            {tokens, session} = sql_batch(rest, session)
+            {[use_tokens, tokens], session}
+          else
+            {use_tokens, session}
+          end
+        else
+          message =
+            "Database '#{db}' does not exist. Make sure that the name is entered correctly."
+
+          {[Tds.notice(:error, 911, 16, message), Tds.done(:done, error: true)], session}
+        end
+
+      nil ->
+        case Ssms.answer(sql, %{}, session.database) do
+          {:ok, tokens} -> {tokens, session}
+          :nomatch -> batch(sql, %{}, session, :done)
+        end
     end
   end
 
@@ -418,7 +461,10 @@ defmodule Kurwa.Mssql.Server do
         {:rows, columns, rows, _tag} ->
           columns =
             Enum.map(columns, fn {name, type} ->
-              {if(name == "?column?", do: "", else: name), type}
+              # SQL Server names only columns and aliases: an expression,
+              # @@TRANCOUNT included, comes back unnamed.
+              {if(name == "?column?" or String.starts_with?(name, "@@"), do: "", else: name),
+               type}
             end)
 
           count = if session.nocount, do: nil, else: length(rows)
@@ -545,12 +591,21 @@ defmodule Kurwa.Mssql.Server do
     end
   end
 
-  defp rpc({"sp_executesql", [{_, sql, _} | rest]}, session, more?) do
+  defp rpc({"sp_executesql", [{_, sql, _} | rest]} = request, session, more?) do
+    case Ssms.answer(sql, named(Enum.drop(rest, 1)), session.database) do
+      {:ok, tokens} -> {tokens, session}
+      :nomatch -> executesql(request, session, more?)
+    end
+  end
+
+  defp rpc(request, session, more?), do: other_rpc(request, session, more?)
+
+  defp executesql({"sp_executesql", [{_, sql, _} | rest]}, session, more?) do
     {tokens, session} = batch(sql, named(Enum.drop(rest, 1)), session, :in_proc)
     {[tokens, Tds.return_status(0), Tds.done(:proc, more: more?)], session}
   end
 
-  defp rpc({"sp_prepare", [{handle_name, _, true}, _decl, {_, sql, _} | _]}, session, more?) do
+  defp other_rpc({"sp_prepare", [{handle_name, _, true}, _decl, {_, sql, _} | _]}, session, more?) do
     {handle, session} = prepare(sql, session)
 
     {[
@@ -560,7 +615,11 @@ defmodule Kurwa.Mssql.Server do
      ], session}
   end
 
-  defp rpc({"sp_prepexec", [{handle_name, _, true}, _decl, {_, sql, _} | values]}, session, more?) do
+  defp other_rpc(
+         {"sp_prepexec", [{handle_name, _, true}, _decl, {_, sql, _} | values]},
+         session,
+         more?
+       ) do
     {handle, session} = prepare(sql, session)
     {tokens, session} = batch(sql, named(values), session, :in_proc)
 
@@ -572,7 +631,7 @@ defmodule Kurwa.Mssql.Server do
      ], session}
   end
 
-  defp rpc({"sp_execute", [{_, handle, _} | values]}, session, more?) do
+  defp other_rpc({"sp_execute", [{_, handle, _} | values]}, session, more?) do
     case Map.fetch(session.prepared, handle) do
       {:ok, sql} ->
         {tokens, session} = batch(sql, named(values), session, :in_proc)
@@ -591,14 +650,14 @@ defmodule Kurwa.Mssql.Server do
     end
   end
 
-  defp rpc({"sp_unprepare", [{_, handle, _} | _]}, session, more?) do
+  defp other_rpc({"sp_unprepare", [{_, handle, _} | _]}, session, more?) do
     {[Tds.return_status(0), Tds.done(:proc, more: more?)],
      %{session | prepared: Map.delete(session.prepared, handle)}}
   end
 
   # A procedure by name: how ODBC's {call ...}, tedious's callProcedure and
   # pymssql's callproc reach one.
-  defp rpc({name, params}, session, more?) when is_binary(name) and name != "" do
+  defp other_rpc({name, params}, session, more?) when is_binary(name) and name != "" do
     case Kurwa.Procedures.lookup(name) do
       nil ->
         not_found(name, session, more?)
@@ -635,7 +694,7 @@ defmodule Kurwa.Mssql.Server do
     end
   end
 
-  defp rpc({name, _params}, session, more?), do: not_found(name, session, more?)
+  defp other_rpc({name, _params}, session, more?), do: not_found(name, session, more?)
 
   # OUTPUT values go back for the parameters the client marked as output, at
   # the place it sent them.

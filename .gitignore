@@ -19,3 +19,4 @@ erl_crash.dump
 
 # deployment secrets
 /deploy/.env
+__pycache__/

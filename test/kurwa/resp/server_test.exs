@@ -82,6 +82,14 @@ defmodule Kurwa.Resp.ServerTest do
       else: recv_line(socket, line)
   end
 
+  test "KURWA.NODES lists the members with their RESP address", %{socket: s} do
+    assert [[node, host, port, up]] = command(s, ["KURWA.NODES"])
+    assert node == to_string(node())
+    assert is_binary(host) and host != ""
+    assert port == Kurwa.Config.get(:resp_port)
+    assert up in [1, true]
+  end
+
   test "ping, echo, select 0, and an inline command", %{socket: s} do
     assert command(s, ["PING"]) == {:simple, "PONG"}
     assert command(s, ["ECHO", "hi"]) == "hi"

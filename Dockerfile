@@ -36,6 +36,7 @@ COPY lib lib
 COPY test test
 COPY examples examples
 COPY priv/dashboard priv/dashboard
+COPY priv/mssql priv/mssql
 
 # --------------------------------------------------------------- release
 FROM base AS release

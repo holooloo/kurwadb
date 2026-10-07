@@ -490,6 +490,24 @@ defmodule Kurwa.Mssql.Tds do
     {if(scale == 0, do: value, else: value / :math.pow(10, scale)), rest}
   end
 
+  # TEXT / NTEXT parameters (SMO sends ntext): a max length, a collation,
+  # then a 4-byte length (0xFFFFFFFF for NULL) and the bytes.
+  def typed_value(<<t, _max::32, _collation::binary-size(5), 0xFFFFFFFF::32, rest::binary>>)
+      when t in [0x23, 0x63],
+      do: {nil, rest}
+
+  def typed_value(
+        <<0x63, _max::32, _collation::binary-size(5), len::32-little, v::binary-size(len),
+          rest::binary>>
+      ),
+      do: {utf8(v), rest}
+
+  def typed_value(
+        <<0x23, _max::32, _collation::binary-size(5), len::32-little, v::binary-size(len),
+          rest::binary>>
+      ),
+      do: {v, rest}
+
   # Date and time types: a scale for some, then a length and the bytes.
   def typed_value(<<t, len, raw::binary-size(len), rest::binary>>) when t in [0x28, 0x6F, 0x6E],
     do: {{:raw, t, raw}, rest}

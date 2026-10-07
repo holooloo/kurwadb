@@ -329,6 +329,19 @@ as the password; Windows authentication is refused. Parameters arrive as
 `sp_executesql` / `sp_prepare` / `sp_execute` RPCs and are answered as such.
 `test/drivers/` has pymssql/pyodbc and tedious checks.
 
+### SQL Server Management Studio
+
+SSMS connects (SQL Server authentication, Encrypt: Mandatory with Trust server
+certificate) and its Object Explorer lists the databases - `kurwadb` beside
+the system ones - and, in `kurwadb`, every set as a table and every schema.
+SMO's catalog queries are answered from answers recorded against a real SQL
+Server (`priv/mssql/ssms.json`), with the exact column types it sent and rows
+made from kurwadb's own sets and schemas; the server reports the recorded
+engine and version, because SMO picks its queries by version. Recording more
+of SSMS is three scripts in `deploy/`: `tds_record.py` sits between SSMS and a
+real server, `ssms_fixture.py` turns the session into answers, and
+`tds_replay.py` replays it against kurwadb and compares every column type.
+
 ### Stored procedures
 
 Procedures are `.sql` files in `KURWA_PROCEDURES_DIR`, read when the node
@@ -463,6 +476,15 @@ KURWA_DATA_DIR=tmp/bench mix run bench/local.exs
 MIX_ENV=test mix run --no-start bench/cluster.exs
 bench/http.sh
 ```
+
+## Clients
+
+kurwadb speaks the PostgreSQL, MySQL, SQL Server, MongoDB and Redis wire
+protocols, so their drivers work. Its own clients add what a generic driver
+cannot: they learn every node from one (`KURWA.NODES` over RESP), spread
+requests over the healthy ones and move off a node that fails.
+
+- [Node.js](clients/js/README.md) - `clients/js`, no dependencies
 
 ## License
 
