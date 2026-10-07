@@ -74,6 +74,45 @@ defmodule Kurwa.TdsClient do
     decode(tokens)
   end
 
+  @doc """
+  Calls a procedure by name as an RPC: `params` are `{name, value, output?}`
+  with NVARCHAR values, or `{name, nil, true}` for an output to be filled.
+  """
+  def call(s, procedure, params) do
+    name = ucs2(procedure)
+
+    body = [
+      all_headers(),
+      <<div(byte_size(name), 2)::16-little>>,
+      name,
+      <<0::16>>,
+      Enum.map(params, fn {pname, value, output} ->
+        n = ucs2(pname)
+        status = if output, do: 1, else: 0
+
+        case value do
+          nil ->
+            [
+              div(byte_size(n), 2),
+              n,
+              status,
+              0xE7,
+              <<8000::16-little>>,
+              <<0x09, 0x04, 0xD0, 0x00, 0x34>>,
+              <<0xFFFF::16>>
+            ]
+
+          value ->
+            [div(byte_size(n), 2), n, status | tl(tl(tl(nvarchar_param("", value))))]
+        end
+      end)
+    ]
+
+    send_message(s, 0x03, body)
+    {0x04, tokens} = recv_message(s)
+    decode(tokens)
+  end
+
   @doc "A transaction-manager request: :begin, :commit or :rollback."
   def transaction(s, kind) do
     request =
@@ -258,12 +297,23 @@ defmodule Kurwa.TdsClient do
     do: decode(rest, cols, [{:return_status, status} | acc])
 
   defp decode(
-         <<0xAC, _ord::16, chars, _name::binary-size(chars * 2), _status, _user::32, _flags::16,
-           0x26, 4, 4, v::32-little-signed, rest::binary>>,
+         <<0xAC, _ord::16, chars, name::binary-size(chars * 2), _status, _user::32, _flags::16,
+           rest::binary>>,
          cols,
          acc
-       ),
-       do: decode(rest, cols, [{:return_value, v} | acc])
+       ) do
+    {type, rest} =
+      case rest do
+        <<0x26, _len, rest::binary>> -> {:int, rest}
+        <<0x68, _len, rest::binary>> -> {:bool, rest}
+        <<0xE7, _max::16, _coll::binary-size(5), rest::binary>> -> {:text, rest}
+      end
+
+    {value, rest} = value(type, rest)
+    name = utf8(name)
+    entry = if name == "", do: {:return_value, value}, else: {:return_value, name, value}
+    decode(rest, cols, [entry | acc])
+  end
 
   defp decode(<<0xAE, 0xFF, rest::binary>>, cols, acc), do: decode(rest, cols, acc)
 

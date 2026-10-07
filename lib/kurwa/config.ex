@@ -51,6 +51,7 @@ defmodule Kurwa.Config do
     mssql_port: 1433,
     mssql_tls: nil,
     mssql_encryption: :on,
+    procedures_dir: nil,
     mongo_port: 27017,
     mysql_port: 3306,
     resp_port: 6379,

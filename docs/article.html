@@ -792,6 +792,14 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
      says is there; the next was rejected by macOS for lacking the extensions a TLS
      certificate must have. The third is built field by field and works.</p>
 
+  <p>Stored procedures raised the same question as everything else in this store, in a
+     new place: a procedure's definition is a value. Rather than keep values to support
+     <code>CREATE PROCEDURE</code>, procedures are <code>.sql</code> files deployed with
+     each node and read at start, with a hash of them in <code>/info</code> so nodes that
+     disagree are visible. A small interpreter runs a T-SQL subset — variables, IF,
+     EXEC with OUTPUT, THROW — and inside it, <code>IF NOT EXISTS … INSERT</code> is still
+     the one-winner add, where in SQL Server the same text races.</p>
+
   <p><code>sqlcmd</code>, pymssql and tedious run their checks against it, encrypted and
      not, with <code>sp_executesql</code> and prepared statements. TLS is the expensive
      part on the server too: 48,000 lookups a second through tedious with encryption,
@@ -863,7 +871,7 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
   <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 357 tests — run against both engines — plus
+    <p><strong>kurwadb</strong> is MIT-licensed, 372 tests — run against both engines — plus
        19 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·

@@ -33,7 +33,7 @@ Working, with 246 unit tests and 15 cluster tests — and both storage engines
 pass the same suite.
 
 ```sh
-mix test                          # 357 tests, ~3s
+mix test                          # 372 tests, ~3s
 mix test --include cluster        # 19 more, ~14s: three real nodes, three real BEAMs
 KURWA_TEST_ENGINE=lsm mix test    # the same suite against the on-disk engine
 mix test --include psql           # the real psql against the PostgreSQL frontend
@@ -282,8 +282,40 @@ self-signed certificate is made at start, as SQL Server does, so clients need
 certificate the client trusts. SQL Server authentication with `auth_token`
 as the password; Windows authentication is refused. Parameters arrive as
 `sp_executesql` / `sp_prepare` / `sp_execute` RPCs and are answered as such.
-Stored procedures are not supported yet; when they are, they will be files
-deployed with the node. `test/drivers/` has pymssql/pyodbc and tedious checks.
+`test/drivers/` has pymssql/pyodbc and tedious checks.
+
+### Stored procedures
+
+Procedures are `.sql` files in `KURWA_PROCEDURES_DIR`, read when the node
+starts - a definition is a value, and this store keeps keys, so they are
+deployed with the node rather than created with `CREATE PROCEDURE` over the
+wire. [`examples/procedures/tokens.sql`](examples/procedures/tokens.sql):
+
+```sql
+CREATE OR ALTER PROCEDURE dbo.consume @token NVARCHAR(200), @taken BIT OUTPUT AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT 1 FROM tokens WHERE [key] = @token)
+        INSERT INTO tokens VALUES (@token);          -- one atomic add_new
+    SET @taken = @@ROWCOUNT;
+    IF @taken = 0 RETURN 1;
+    RETURN 0;
+END
+```
+
+```sql
+DECLARE @t BIT, @rc INT;
+EXEC @rc = dbo.consume N'order:1', @t OUTPUT;   -- @t = 1, @rc = 0; the second time 0 and 1
+```
+
+Drivers call them by name too (ODBC `{call ...}`, tedious `callProcedure`).
+The language is a T-SQL subset: parameters with defaults and OUTPUT, `DECLARE`,
+`SET`, `IF`/`ELSE`, `BEGIN ... END`, conditions with comparisons, `AND`/`OR`/`NOT`,
+`IS NULL`, `IN` and `EXISTS`, `RETURN`, `THROW`, `RAISERROR`, `PRINT`, nested
+`EXEC` up to 32 deep, and the statements a set answers. `WHILE`, cursors,
+`TRY/CATCH`, `CASE` and table variables are refused by name. A broken file
+stops the node from starting; `/info` shows a hash of what each node loaded, so
+nodes with different files are visible.
 
 ## Configuration
 
@@ -314,6 +346,7 @@ variables are read at boot (`config/runtime.exs`).
 | `start_mongo` `mongo_port` | `KURWA_MONGO` `KURWA_MONGO_PORT` | `false`, 27017 | the MongoDB protocol |
 | `start_mssql` `mssql_port` | `KURWA_MSSQL` `KURWA_MSSQL_PORT` | `false`, 1433 | the SQL Server protocol (TDS) |
 | `mssql_tls` | `KURWA_MSSQL_TLS_CERT` `KURWA_MSSQL_TLS_KEY` | self-signed | `:ssl` server options for TDS |
+| `procedures_dir` | `KURWA_PROCEDURES_DIR` | none | `.sql` files of stored procedures, read at start |
 | `auth_token` | `KURWA_AUTH_TOKEN` | none | bearer token for HTTP, the password for PostgreSQL, MySQL, SQL Server, MongoDB and Redis `AUTH` |
 
 `r + w > n` is what gives you read-your-writes on a key. Weaker settings are
@@ -353,6 +386,8 @@ Kurwa.Resp            the Redis protocol, RESP2 and RESP3
 Kurwa.Mysql           the MySQL protocol, text and binary result sets
 Kurwa.Mongo           the MongoDB protocol: OP_MSG, BSON, answering as a mongos
 Kurwa.Mssql           the SQL Server protocol, TDS 7.4 and 8, with TLS inside PRELOGIN
+Kurwa.Procedures      stored procedures, loaded from .sql files
+Kurwa.Sql.Procedural  the T-SQL subset they and batches run in
 ```
 
 [ARCHITECTURE.md](ARCHITECTURE.md) has the reasoning, the measured failure

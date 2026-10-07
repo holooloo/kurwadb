@@ -33,7 +33,7 @@ defmodule Kurwa.Mssql.Server do
   use ThousandIsland.Handler
 
   alias Kurwa.Mssql.{Tds, Transport}
-  alias Kurwa.Sql.{Exec, Parser}
+  alias Kurwa.Sql.Procedural
 
   require Logger
 
@@ -220,6 +220,7 @@ defmodule Kurwa.Mssql.Server do
         "isintegratedsecurityonly" => 0
       },
       transaction: nil,
+      tx_next: 1,
       nocount: false,
       prepared: %{},
       next_handle: 1,
@@ -262,112 +263,188 @@ defmodule Kurwa.Mssql.Server do
     end
   end
 
-  # A batch of statements. `kind` is :done for a SQL batch, :in_proc inside sp_executesql.
+  # A batch: the procedural interpreter runs it - a batch may DECLARE, IF and
+  # EXEC like a procedure body - and its events become tokens. `kind` is :done
+  # for a SQL batch, :in_proc inside sp_executesql.
   defp batch(sql, params, session, kind) do
     session = refresh(session)
 
-    case Parser.parse(sql, :tsql) do
+    case Procedural.parse_body(sql) do
       {:ok, statements} ->
-        run_statements(statements, params, session, kind, [])
+        ctx = %{
+          session: session,
+          vars: params,
+          procedure: &Kurwa.Procedures.lookup/1,
+          observe: &observe/3
+        }
+
+        {events, after_batch} = Procedural.run_batch(statements, ctx)
+        {tokens(events, session, kind), after_batch}
 
       {:error, code, message} ->
         {[error(code, message), Tds.done(kind, error: true)], session}
     end
   end
 
-  defp run_statements([], _params, session, _kind, acc), do: {acc, session}
+  # Called by the interpreter as each statement completes, so @@ROWCOUNT,
+  # @@TRANCOUNT and NOCOUNT are current for the next one.
+  defp observe(statement, result, session) do
+    session =
+      case {statement, result} do
+        {{:set, _}, _} ->
+          nocount(statement, session)
 
-  defp run_statements([statement | more], params, session, kind, acc) do
-    {tokens, session, ok?} = statement(statement, params, session, kind, more != [])
-    acc = [acc, tokens]
+        {_, {:command, tag}} ->
+          {_envchange, session} = transaction(statement, session)
+          %{session | rowcount: affected(tag) || 0}
 
-    if ok? and more != [],
-      do: run_statements(more, params, refresh(session), kind, acc),
-      else: {acc, session}
-  end
+        {_, {:rows, _, rows, _}} ->
+          %{session | rowcount: length(rows)}
 
-  defp statement(statement, params, session, kind, more?) do
-    result =
-      case statement do
-        {:use, db} when db in [@database, "master"] ->
-          {:use_ok}
-
-        {:use, db} ->
-          {:error, "3F000",
-           "Database '#{db}' does not exist. Make sure that the name is entered correctly."}
-
-        {:set, _} = set ->
-          set
-
-        other ->
-          Exec.run(other, params, session)
+        _ ->
+          session
       end
 
+    refresh(session)
+  end
+
+  # Events to tokens. Every DONE but the last says more follows. Transactions
+  # are replayed from the session the batch started with, which gives the same
+  # descriptors observe/3 gave, for the ENVCHANGEs drivers track.
+  defp tokens(events, session, kind) do
+    {groups, _session} = Enum.flat_map_reduce(events, session, &event_tokens(&1, &2, kind))
+
+    last = groups |> Enum.with_index() |> Enum.filter(&match?({{:done, _}, _}, &1)) |> List.last()
+    last = if last, do: elem(last, 1), else: nil
+
+    tokens =
+      groups
+      |> Enum.with_index()
+      |> Enum.map(fn
+        {{:done, build}, i} -> build.(i != last)
+        {{:plain, iodata}, _} -> iodata
+      end)
+
+    if last == nil, do: [tokens, Tds.done(kind)], else: tokens
+  end
+
+  defp event_tokens({:result, statement, result, depth}, session, kind) do
+    kind = if depth == 0, do: kind, else: :in_proc
+    session = nocount(statement, session)
+
+    {envchange, session} =
+      case result do
+        {:command, _} -> transaction(statement, session)
+        _ -> {[], session}
+      end
+
+    # Inside a procedure, SQL Server sends no DONEINPROC for a SET, nor - with
+    # NOCOUNT ON, which is what NOCOUNT is for - for any statement without a
+    # result set. Clients read OUTPUT values only once the results are done,
+    # so the extra tokens are not harmless: pymssql then reads stale outputs.
+    silent? =
+      kind == :in_proc and
+        (match?({:set, _}, statement) or
+           (session.nocount and not match?({:rows, _, _, _}, result)))
+
+    if silent? and envchange == [] do
+      {[], session}
+    else
+      result_group(statement, result, session, kind, envchange)
+    end
+  end
+
+  defp event_tokens({:notice, text}, session, _kind),
+    do: {[{:plain, Tds.notice(:info, 0, 0, text)}], session}
+
+  defp event_tokens({:raised, number, text}, session, _kind),
+    do: {[{:plain, Tds.notice(:error, number, 16, text)}], session}
+
+  defp event_tokens({:error, number, text}, session, kind) do
+    token =
+      case number do
+        {:sqlstate, code} -> error(code, text)
+        n -> Tds.notice(:error, n, 16, text)
+      end
+
+    {[{:done, fn more -> [token, Tds.done(kind, more: more, error: true)] end}], session}
+  end
+
+  defp event_tokens({:proc, _name, code, depth}, session, _kind) do
+    _ = depth
+    {[{:done, fn more -> [Tds.return_status(code), Tds.done(:proc, more: more)] end}], session}
+  end
+
+  defp result_group(_statement, result, session, kind, envchange) do
     result =
       case result do
         {:catalog, sql} -> Kurwa.Pg.Catalog.answer(sql, session)
         other -> other
       end
 
-    notices = for text <- Exec.take_notices(), do: Tds.notice(:info, 0, 0, text)
+    group =
+      case result do
+        {:rows, columns, rows, _tag} ->
+          columns =
+            Enum.map(columns, fn {name, type} ->
+              {if(name == "?column?", do: "", else: name), type}
+            end)
 
-    case result do
-      {:error, code, message} ->
-        {[notices, error(code, message), Tds.done(kind, error: true, more: false)], session,
-         false}
+          count = if session.nocount, do: nil, else: length(rows)
 
-      {:rows, columns, rows, _tag} ->
-        columns =
-          Enum.map(columns, fn {name, type} ->
-            {if(name == "?column?", do: "", else: name), type}
-          end)
+          {:done,
+           fn more ->
+             [
+               Tds.colmetadata(columns),
+               Enum.map(rows, &Tds.row(&1, columns)),
+               Tds.done(kind, more: more, count: count, command: 0xC1)
+             ]
+           end}
 
-        count = if session.nocount, do: nil, else: length(rows)
+        {:command, tag} ->
+          n = affected(tag)
+          count = if session.nocount or n == nil, do: nil, else: n
 
-        tokens = [
-          notices,
-          Tds.colmetadata(columns),
-          Enum.map(rows, &Tds.row(&1, columns)),
-          Tds.done(kind, more: more?, count: count, command: 0xC1)
-        ]
+          {:done,
+           fn more ->
+             [envchange, Tds.done(kind, more: more, count: count, command: command(tag))]
+           end}
 
-        {tokens, %{session | rowcount: length(rows)}, true}
+        {:use, db} when db in [@database, "master"] ->
+          {:done,
+           fn more -> [Tds.envchange(1, @database, @database), Tds.done(kind, more: more)] end}
 
-      {:command, tag} ->
-        {envchange, session} = transaction(statement, session)
-        n = affected(tag)
-        count = if session.nocount or n == nil, do: nil, else: n
+        {:use, db} ->
+          message =
+            "Database '#{db}' does not exist. Make sure that the name is entered correctly."
 
-        {[envchange, notices, Tds.done(kind, more: more?, count: count, command: command(tag))],
-         %{session | rowcount: n || 0}, true}
+          {:done,
+           fn more ->
+             [Tds.notice(:error, 911, 16, message), Tds.done(kind, more: more, error: true)]
+           end}
 
-      {:use_ok} ->
-        {[Tds.envchange(1, @database, @database), Tds.done(kind, more: more?)], session, true}
+        _ ->
+          {:done, fn more -> Tds.done(kind, more: more) end}
+      end
 
-      {:set, {name, _value}} ->
-        session =
-          case String.split(name) do
-            ["nocount", "on"] -> %{session | nocount: true}
-            ["nocount", "off"] -> %{session | nocount: false}
-            _ -> session
-          end
+    {[group], session}
+  end
 
-        {[Tds.done(kind, more: more?)], session, true}
-
-      {:set, _name, _value, _tag} ->
-        {[Tds.done(kind, more: more?)], session, true}
-
-      :empty ->
-        {[Tds.done(kind, more: more?)], session, true}
-
-      _other ->
-        {[Tds.done(kind, more: more?)], session, true}
+  defp nocount({:set, {name, _}}, session) do
+    case String.split(name) do
+      ["nocount", "on"] -> %{session | nocount: true}
+      ["nocount", "off"] -> %{session | nocount: false}
+      _ -> session
     end
   end
 
+  defp nocount(_statement, session), do: session
+
   defp transaction({:utility, :begin, _}, %{transaction: nil} = session) do
-    descriptor = System.unique_integer([:positive])
-    {Tds.envchange(:begin, descriptor), %{session | transaction: descriptor}}
+    descriptor = session.tx_next
+
+    {Tds.envchange(:begin, descriptor),
+     %{session | transaction: descriptor, tx_next: descriptor + 1}}
   end
 
   defp transaction({:utility, kind, _}, %{transaction: d} = session)
@@ -488,11 +565,73 @@ defmodule Kurwa.Mssql.Server do
      %{session | prepared: Map.delete(session.prepared, handle)}}
   end
 
-  defp rpc({name, _params}, session, more?) do
+  # A procedure by name: how ODBC's {call ...}, tedious's callProcedure and
+  # pymssql's callproc reach one.
+  defp rpc({name, params}, session, more?) when is_binary(name) and name != "" do
+    case Kurwa.Procedures.lookup(name) do
+      nil ->
+        not_found(name, session, more?)
+
+      proc ->
+        args =
+          Enum.map(params, fn {param, value, output} ->
+            %{
+              param: param |> String.trim_leading("@") |> String.downcase() |> blank_to_nil(),
+              value: value,
+              output: output
+            }
+          end)
+
+        ctx = %{
+          session: refresh(session),
+          procedure: &Kurwa.Procedures.lookup/1,
+          observe: &observe/3
+        }
+
+        {events, code, outputs, session_after} = Procedural.call(proc, args, ctx)
+        inner = tokens(events, session, :in_proc)
+
+        if code == nil do
+          {[inner, Tds.done(:proc, error: true, more: more?)], session_after}
+        else
+          {[
+             inner,
+             Tds.return_status(code),
+             return_values(params, proc, outputs),
+             Tds.done(:proc, more: more?)
+           ], session_after}
+        end
+    end
+  end
+
+  defp rpc({name, _params}, session, more?), do: not_found(name, session, more?)
+
+  # OUTPUT values go back for the parameters the client marked as output, at
+  # the place it sent them.
+  defp return_values(params, proc, outputs) do
+    by_name = Map.new(outputs, fn {name, type, value} -> {name, {type, value}} end)
+
+    params
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {{name, _value, output}, i} ->
+      param = name |> String.trim_leading("@") |> String.downcase()
+      param = if param == "", do: (Enum.at(proc.params, i) || %{name: ""}).name, else: param
+
+      case {output, Map.fetch(by_name, param)} do
+        {true, {:ok, {type, value}}} -> [Tds.return_value(i, "@" <> param, value, type)]
+        _ -> []
+      end
+    end)
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(name), do: name
+
+  defp not_found(name, session, more?) do
     shown = if is_binary(name), do: name, else: inspect(name)
 
     message =
-      "Could not find stored procedure '#{shown}'. Procedures are planned as files deployed with the node."
+      "Could not find stored procedure '#{shown}'. Procedures are .sql files in the node's procedures_dir."
 
     {[Tds.notice(:error, 2812, 16, message), Tds.done(:proc, error: true, more: more?)], session}
   end

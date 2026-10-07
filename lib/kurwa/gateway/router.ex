@@ -195,7 +195,8 @@ defmodule Kurwa.Gateway.Router do
       engine: inspect(info.engine),
       local_keys: info.local_keys,
       lamport: info.lamport,
-      cache: info.cache
+      cache: info.cache,
+      procedures: %{count: length(Kurwa.Procedures.names()), hash: Kurwa.Procedures.hash()}
     })
   end
 

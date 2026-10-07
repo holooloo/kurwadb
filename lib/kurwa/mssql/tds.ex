@@ -278,6 +278,39 @@ defmodule Kurwa.Mssql.Tds do
 
   def return_status(n), do: <<0x79, n::32-little-signed>>
 
+  @doc """
+  RETURNVALUE for a procedure's OUTPUT parameter, typed by the family it was
+  declared with: an integer, a bit, or text.
+  """
+  def return_value(ordinal, name, value, family) do
+    {type_info, data} =
+      case {family, value} do
+        {:int, nil} ->
+          {[0x26, 8], <<0>>}
+
+        {:int, v} when v >= -2_147_483_648 and v <= 2_147_483_647 ->
+          {[0x26, 4], <<4, v::32-little-signed>>}
+
+        {:int, v} ->
+          {[0x26, 8], <<8, v::64-little-signed>>}
+
+        {:bit, nil} ->
+          {[0x68, 1], <<0>>}
+
+        {:bit, v} ->
+          {[0x68, 1], <<1, if(v in [true, 1], do: 1, else: 0)>>}
+
+        {_, nil} ->
+          {[0xE7, <<8000::16-little>>, collation()], <<0xFFFF::16>>}
+
+        {_, v} ->
+          {[0xE7, <<8000::16-little>>, collation()],
+           [<<byte_size(ucs2(to_text(v)))::16-little>>, ucs2(to_text(v))]}
+      end
+
+    [0xAC, <<ordinal::16-little>>, b_varchar(name), 0x01, <<0::32, 0::16>>, type_info, data]
+  end
+
   @doc "RETURNVALUE for an int OUTPUT parameter (sp_prepare's handle)."
   def return_value(ordinal, name, value) do
     [

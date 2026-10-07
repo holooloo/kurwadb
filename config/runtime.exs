@@ -45,6 +45,7 @@ if config_env() != :test do
     start_mongo: System.get_env("KURWA_MONGO") in ~w(1 true),
     mongo_port: int.("KURWA_MONGO_PORT", 27017),
     start_mssql: System.get_env("KURWA_MSSQL") in ~w(1 true),
+    procedures_dir: System.get_env("KURWA_PROCEDURES_DIR"),
     mssql_port: int.("KURWA_MSSQL_PORT", 1433),
     mssql_tls:
       (case {System.get_env("KURWA_MSSQL_TLS_CERT"), System.get_env("KURWA_MSSQL_TLS_KEY")} do

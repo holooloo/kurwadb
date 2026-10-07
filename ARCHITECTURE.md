@@ -576,6 +576,53 @@ DELETE.
 * **Errors** carry SQL Server's numbers - 102 for syntax, 207 for a column, 137
   for an undeclared variable - and 50000 for kurwadb's own refusals.
 
+## Stored procedures
+
+A procedure's definition is a value, and kurwadb stores keys. `CREATE
+PROCEDURE` over the wire would need a replicated catalog that keeps values -
+the first thing in this store that would - so procedures are `.sql` files
+deployed with each node instead, in `procedures_dir`, read at start
+(`Kurwa.Procedures`). Deployment keeps nodes alike; `/info` carries a hash of
+the definitions each node loaded, so a node with different files is visible
+rather than silently different. A file that does not parse stops the node:
+procedures are configuration, and a broken one should be loud. `reload/0`
+re-reads at run time and keeps the old set on error. Files are scripts as SQL
+Server writes them - `GO` lines between procedures, `SET ANSI_NULLS ON` and
+the like skipped.
+
+`Kurwa.Sql.Procedural` runs them, and runs every T-SQL batch too, since a
+batch can DECLARE and EXEC like a body. It parses control flow around the data
+statements `Kurwa.Sql.Parser` already knows and interprets it, producing
+events - results, notices, errors, procedure returns - that the frontend turns
+into its own protocol; nothing in it is TDS. What it covers is what a
+procedure over a set needs: parameters with defaults and OUTPUT, scalar
+variables, IF/ELSE and blocks, comparisons, boolean logic, IS NULL, IN, EXISTS,
+`+` and `-`, RETURN codes, THROW and RAISERROR with SQL Server's semantics
+(RAISERROR below severity 11 is a message; at 11 or above it is an error and
+the body goes on; THROW stops it), PRINT, nested EXEC by position or name with
+OUTPUT and `EXEC @rc =`, to SQL Server's limit of 32 levels.
+
+Two choices that differ from a default SQL Server:
+
+* **A failing statement stops the procedure**, as under `SET XACT_ABORT ON`,
+  which is how most procedures are written to run. Under SQL Server's default
+  the next statement would run; there is no rollback here to make that safe.
+* **`IF NOT EXISTS (SELECT ... WHERE [key] = x) INSERT ... VALUES (x)` is one
+  statement**, the atomic `add_new`, not a check followed by an insert. In SQL
+  Server the same text races without a lock hint; here it has one winner.
+
+Refused by name: WHILE, cursors, TRY/CATCH, CASE, dynamic SQL, and table
+variables and temporary tables, which are tables with columns - the one thing
+this store is not.
+
+Over TDS, `SET NOCOUNT ON` inside a procedure sends no DONEINPROC for
+statements without a result set, as SQL Server does. That is not a nicety:
+clients read OUTPUT values once the results are done, and the extra tokens
+left pymssql reading stale ones. pymssql's `callproc` still hands OUTPUT values
+back a call late - FreeTDS reads them lazily, and whether real SQL Server
+avoids that has not been checked here - so pymssql code reads them through
+`EXEC ..., @v OUTPUT; SELECT @v` in a batch, which works.
+
 ## The MongoDB frontend
 
 `Kurwa.Mongo` speaks OP_MSG - and OP_QUERY, which drivers still use for the
@@ -699,15 +746,6 @@ more than it needs to. Levels would bound the write amplification.
 the "key = hash(value)" model - and its arena plus separate index is a different
 blueprint for immutable on-disk sets than the LSM one, worth having if content
 addressing ever becomes the point.
-
-**Procedures for SQL Server, as files.** `CREATE PROCEDURE` over the wire would
-need a replicated catalog that stores values, which this store does not have.
-The decision is to keep procedures as `.sql` files deployed with each node and
-loaded at start - the same on every node, managed by deployment, not by DDL -
-running a T-SQL subset: parameters with OUTPUT and defaults, scalar DECLARE and
-SET, IF/ELSE and IF EXISTS on a key, RETURN codes, the statements a set
-answers, nested EXEC, THROW. Temporary tables and table variables are tables
-with columns, and stay out.
 
 **Cheaper TLS on TDS.** A lookup costs about 11 µs on the server; through
 tedious it is 80 000 a second without TLS and 48 000 with it. The TLS path

@@ -35,6 +35,13 @@ defmodule Kurwa.Sql.Exec do
   @doc "The value `SELECT version()` answers with."
   def version, do: "PostgreSQL 16.0 (kurwadb #{@version}), a distributed set that stores keys"
 
+  @doc "Evaluates one expression: `{:ok, value}` or `{:error, sqlstate, message}`."
+  def evaluate(expr, params, session) do
+    {:ok, eval(expr, params, session)}
+  catch
+    {:sql_error, code, message} -> {:error, code, message}
+  end
+
   @doc "Runs `statement` with bound `params`."
   def run(statement, params, session) do
     execute(statement, params, session)
@@ -505,6 +512,17 @@ defmodule Kurwa.Sql.Exec do
   defp type({:lit, n}, _) when is_integer(n), do: :int4
   defp type({:lit, b}, _) when is_boolean(b), do: :bool
   defp type({:lit, _}, _), do: :text
+  # A T-SQL variable has a type, which its value carries: params is then a
+  # map. Positional parameters (PostgreSQL, MySQL) stay text, as Describe said.
+  defp type({:param, name}, params) when is_binary(name) and is_map(params) do
+    case Map.get(params, name) do
+      v when is_boolean(v) -> :bool
+      v when is_integer(v) and v >= -2_147_483_648 and v <= 2_147_483_647 -> :int4
+      v when is_integer(v) -> :int8
+      _ -> :text
+    end
+  end
+
   defp type({:param, _}, _), do: :text
 
   defp type({:cast, _, t}, _) when t in ~w(int8 bigint), do: :int8

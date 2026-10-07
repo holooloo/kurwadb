@@ -85,7 +85,10 @@ config :kurwadb,
   start_mssql: false,
   mssql_port: 1433,
   mssql_tls: nil,
-  mssql_encryption: :on
+  mssql_encryption: :on,
+
+  # Stored procedures: .sql files with CREATE PROCEDURE, read at start
+  procedures_dir: nil
 
 config :logger, level: :info
 

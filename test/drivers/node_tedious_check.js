@@ -58,6 +58,23 @@ conn.on("connect", async (err) => {
     }
     await new Promise((resolve) => { prepared.removeAllListeners("requestCompleted"); prepared.on("requestCompleted", resolve); conn.unprepare(prepared); });
 
+    // A stored procedure by name, with an OUTPUT parameter and a return code -
+    // only when the node was started with KURWA_PROCEDURES_DIR holding consume.
+    if (process.env.PROCEDURES) {
+      const callConsume = (token) => new Promise((resolve, reject) => {
+        const out = {};
+        const req = new Request("dbo.consume", (err) => (err ? reject(err) : resolve(out)));
+        req.addParameter("token", TYPES.NVarChar, token);
+        req.addOutputParameter("taken", TYPES.Bit);
+        req.on("returnValue", (name, value) => { out[name] = value; });
+        req.on("doneProc", (_rowCount, _more, returnStatus) => { out.rc = returnStatus; });
+        conn.callProcedure(req);
+      });
+      const token = "tok" + Date.now();
+      check("procedure first call", await callConsume(token), { taken: true, rc: 0 });
+      check("procedure second call", await callConsume(token), { taken: false, rc: 1 });
+    }
+
     try { await run("SELECT [key] FROM tset"); console.error("FAIL scan"); process.exit(1); }
     catch (e) { check("scan refused", e.number, 50000); }
     console.log(`tedious: ${checks} checks passed`);

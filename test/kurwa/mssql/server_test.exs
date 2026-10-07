@@ -119,4 +119,51 @@ defmodule Kurwa.Mssql.ServerTest do
     assert [{4060, _}] = C.errors(login)
     :gen_tcp.close(s)
   end
+
+  describe "stored procedures" do
+    setup do
+      :ok =
+        Kurwa.Procedures.put_sources([
+          """
+          CREATE PROCEDURE dbo.consume @token NVARCHAR(200), @taken BIT OUTPUT AS
+          BEGIN
+            SET NOCOUNT ON;
+            IF NOT EXISTS (SELECT 1 FROM tdsproc WHERE [key] = @token)
+              INSERT INTO tdsproc VALUES (@token);
+            SET @taken = @@ROWCOUNT;
+            IF @taken = 0 RETURN 1;
+            RETURN 0;
+          END
+          """
+        ])
+
+      on_exit(fn -> Kurwa.Procedures.reload() end)
+      :ok
+    end
+
+    test "EXEC in a batch, with an OUTPUT variable and the return code", %{s: s} do
+      token = "b#{System.unique_integer([:positive])}"
+
+      sql =
+        "DECLARE @t BIT, @rc INT; EXEC @rc = dbo.consume N'#{token}', @t OUTPUT; SELECT @t AS taken, @rc AS rc"
+
+      assert C.rows(C.batch(s, sql)) == [[true, 0]]
+      assert C.rows(C.batch(s, sql)) == [[false, 1]]
+    end
+
+    test "an RPC by name returns the OUTPUT value and the status", %{s: s} do
+      token = "r#{System.unique_integer([:positive])}"
+      reply = C.call(s, "dbo.consume", [{"@token", token, false}, {"@taken", nil, true}])
+      assert {:return_status, 0} in reply
+      assert {:return_value, "@taken", true} in reply
+
+      reply = C.call(s, "dbo.consume", [{"@token", token, false}, {"@taken", nil, true}])
+      assert {:return_status, 1} in reply
+      assert {:return_value, "@taken", false} in reply
+    end
+
+    test "an unknown procedure is error 2812", %{s: s} do
+      assert [{2812, _}] = C.errors(C.call(s, "nope", []))
+    end
+  end
 end

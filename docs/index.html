@@ -787,8 +787,9 @@ member kurwa3@10.0.0.3 down</span>
          prepared statements, <code>SHOW TABLES</code>, columns named the way MySQL names
          them — around 130,000 queries a second.</p>
       <p>And SQL Server: <code>sqlcmd</code>, ODBC and tedious connect over TLS, as they do by
-         default, and T-SQL's <code>IF NOT EXISTS (…) INSERT</code> is an insert with one
-         winner.</p>
+         default, T-SQL's <code>IF NOT EXISTS (…) INSERT</code> is an insert with one
+         winner, and stored procedures run from <code>.sql</code> files deployed with the
+         node.</p>
       <p>And MongoDB: a collection is a set, a document is <code>{_id: key}</code>, a second
          insert of an <code>_id</code> is <code>E11000</code> with one winner, and every node
          answers as a <code>mongos</code>, so a driver given several nodes fails over between

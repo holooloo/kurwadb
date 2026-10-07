@@ -43,6 +43,19 @@ def exercise(name, conn, param):
 import pymssql
 conn = pymssql.connect(server="127.0.0.1", port=port, user="sa", password=password, database="kurwadb", autocommit=True)
 exercise("pymssql", conn, "%s")
+
+# A stored procedure by name, when the node has the consume procedure loaded.
+import os, time
+if os.environ.get("PROCEDURES"):
+    cur = conn.cursor()
+    token = f"py{time.time_ns()}"
+    # FreeTDS hands back callproc's OUTPUT values a call late, so pymssql
+    # code reads them the usual way: EXEC with an OUTPUT variable in a batch.
+    sql = "DECLARE @t BIT, @rc INT; EXEC @rc = dbo.consume %s, @t OUTPUT; SELECT @t, @rc"
+    cur.execute(sql, (token,))
+    check("pymssql exec procedure first", tuple(cur.fetchone()), (True, 0))
+    cur.execute(sql, (token,))
+    check("pymssql exec procedure second", tuple(cur.fetchone()), (False, 1))
 conn.close()
 
 try:

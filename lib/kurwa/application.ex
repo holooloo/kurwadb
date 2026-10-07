@@ -11,6 +11,7 @@ defmodule Kurwa.Application do
   def start(_type, _args) do
     Config.validate!()
     Kurwa.Clock.init()
+    Kurwa.Procedures.load!()
 
     children =
       [

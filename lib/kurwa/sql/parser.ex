@@ -29,6 +29,7 @@ defmodule Kurwa.Sql.Parser do
   alias Kurwa.Sql.Lexer
 
   @default_table "kurwa"
+  @tsql_starts ~w(select insert delete update set use begin commit rollback if declare exec execute print save create drop merge)
   # A query is a catalog query when it reads a catalog table - not when it
   # merely calls pg_catalog.version(), which drivers do on their own.
   @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|sys\.|master\.|pg_(class|namespace|attribute|type|database|roles|settings|index|proc|description|am|tables|indexes|views|matviews|extension|enum|range|collation|constraint|inherits)\b)/i
@@ -63,6 +64,21 @@ defmodule Kurwa.Sql.Parser do
   @doc "The table name of the default set."
   def default_table, do: @default_table
 
+  @doc """
+  Parses one statement from tokens already split off - what the procedure
+  parser hands over for each data statement in a body.
+  """
+  def statement_tokens(tokens), do: statement(tokens)
+
+  @doc "Parses one expression - a literal, parameter, call, cast - from the front of `tokens`."
+  def expression(tokens), do: expr(tokens)
+
+  @doc "The keywords that start a T-SQL statement, for splitting without semicolons."
+  def tsql_starts, do: @tsql_starts
+
+  @doc "Whether a guard `SELECT ... WHERE key = x` names the key a one-row insert adds."
+  def guards_insert?(guard, table, columns, row), do: guard_matches?(guard, table, columns, row)
+
   defp lex(sql, dialect) do
     case Lexer.tokenize(sql, dialect) do
       {:ok, tokens} -> {:ok, tokens}
@@ -85,7 +101,6 @@ defmodule Kurwa.Sql.Parser do
   # T-SQL does not need semicolons between statements: "SET NOCOUNT ON SELECT 1"
   # is two. So a batch also splits before a statement keyword at the top level -
   # except right after IF (...), where the keyword is the IF's body.
-  @tsql_starts ~w(select insert delete update set use begin commit rollback if declare exec execute print save create drop merge)
 
   defp split_tsql([], _depth, [], []), do: [[]]
   defp split_tsql([], _depth, [], done), do: Enum.reverse(done)
@@ -240,11 +255,15 @@ defmodule Kurwa.Sql.Parser do
     do:
       error(
         "0A000",
-        "EXEC of a procedure is not supported yet: procedures are planned as files deployed with the node"
+        "stored procedures are called over the SQL Server protocol; they are .sql files in procedures_dir"
       )
 
   defp statement([{:ident, "declare"} | _]),
-    do: error("0A000", "DECLARE belongs to procedures, which are not supported yet")
+    do:
+      error(
+        "0A000",
+        "DECLARE belongs to T-SQL batches and procedures, over the SQL Server protocol"
+      )
 
   defp statement([{:ident, "release"} | _]), do: {:ok, {:utility, :release, "RELEASE"}}
 
