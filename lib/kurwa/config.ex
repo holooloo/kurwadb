@@ -61,9 +61,48 @@ defmodule Kurwa.Config do
     auth_token: nil
   }
 
-  @doc "Reads one setting, falling back to the built-in default."
+  @doc """
+  Reads one setting, falling back to the built-in default.
+
+  Settings are read on every request - the quorum sizes, the timeout, the
+  engine - and `Application.get_env/3` costs about 45 ns each, which on a
+  one-microsecond read is a quarter of it. So `load/0` copies them into
+  `:persistent_term` at boot, where a read is a fraction of that, and
+  `put/2` / `delete/1` change a setting at runtime and its copy together.
+  Change settings through those, not `Application.put_env/3`, or the copy
+  goes stale.
+  """
   def get(key) when is_map_key(@defaults, key) do
-    Application.get_env(:kurwadb, key, Map.fetch!(@defaults, key))
+    case :persistent_term.get({__MODULE__, key}, :unloaded) do
+      :unloaded -> Application.get_env(:kurwadb, key, Map.fetch!(@defaults, key))
+      value -> value
+    end
+  end
+
+  @doc "Copies every setting into `:persistent_term`. Called at boot."
+  def load do
+    for key <- Map.keys(@defaults) do
+      :persistent_term.put(
+        {__MODULE__, key},
+        Application.get_env(:kurwadb, key, Map.fetch!(@defaults, key))
+      )
+    end
+
+    :ok
+  end
+
+  @doc "Changes a setting at runtime."
+  def put(key, value) when is_map_key(@defaults, key) do
+    Application.put_env(:kurwadb, key, value)
+    :persistent_term.put({__MODULE__, key}, value)
+    :ok
+  end
+
+  @doc "Returns a setting to its configured default at runtime."
+  def delete(key) when is_map_key(@defaults, key) do
+    Application.delete_env(:kurwadb, key)
+    :persistent_term.put({__MODULE__, key}, Map.fetch!(@defaults, key))
+    :ok
   end
 
   def n, do: get(:n)

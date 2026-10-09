@@ -77,8 +77,8 @@ defmodule Kurwa.RegistryTest do
 
       # Three acks demanded on a one-node ring, strictly: the registry write
       # cannot succeed.
-      Application.put_env(:kurwadb, :w, 3)
-      Application.put_env(:kurwadb, :strict_quorum, true)
+      Kurwa.Config.put(:w, 3)
+      Kurwa.Config.put(:strict_quorum, true)
 
       try do
         Registry.register(set)
@@ -88,8 +88,8 @@ defmodule Kurwa.RegistryTest do
         # still leaves the record on whichever replicas did take it.
         assert eventually(fn -> not Registry.registered_here?(set) end)
       after
-        Application.put_env(:kurwadb, :w, was_w)
-        Application.put_env(:kurwadb, :strict_quorum, was_strict)
+        Kurwa.Config.put(:w, was_w)
+        Kurwa.Config.put(:strict_quorum, was_strict)
       end
 
       :ok = Namespace.add(set, "k2")

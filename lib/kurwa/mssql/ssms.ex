@@ -35,6 +35,13 @@ defmodule Kurwa.Mssql.Ssms do
                 {:error, _} -> %{}
               end)
 
+  # Every request reaches answer/3, and normalising it costs microseconds; the
+  # first few normalised characters rule nearly every request out first.
+  @prefix 10
+  @prefixes @templates
+            |> Map.keys()
+            |> MapSet.new(&binary_part(&1, 0, min(@prefix, byte_size(&1))))
+
   # The recorded server's own name, replaced by this node's in every answer.
   @recorded_server "5a93a07099c2"
   @system_databases ~w(master tempdb model msdb)
@@ -44,12 +51,30 @@ defmodule Kurwa.Mssql.Ssms do
   def databases, do: @system_databases ++ [@database]
 
   @doc "Lowercase, whitespace collapsed, no trailing semicolon: how requests are keyed."
-  def normalise(sql) do
-    sql
-    |> String.downcase()
-    |> String.replace(~r/\s+/u, " ")
-    |> String.trim()
-    |> String.replace(~r/[;\s]+$/, "")
+  def normalise(sql), do: sql |> squeeze(<<>>, true) |> drop_tail()
+
+  # One pass: ASCII lowercased, every run of whitespace one space, none at
+  # the start. Regexes would do it in three, and in OTP 28+ a regex literal is
+  # rebuilt on every call - microseconds on every request.
+  defp squeeze(<<c, rest::binary>>, acc, _space?) when c in [?\s, ?\t, ?\r, ?\n, ?\f, ?\v],
+    do: squeeze(rest, acc, true)
+
+  defp squeeze(<<c, rest::binary>>, acc, space?) do
+    c = if c in ?A..?Z, do: c + 32, else: c
+    acc = if space? and acc != <<>>, do: <<acc::binary, ?\s, c>>, else: <<acc::binary, c>>
+    squeeze(rest, acc, false)
+  end
+
+  defp squeeze(<<>>, acc, _space?), do: acc
+
+  # No trailing semicolons (nor the spaces between them).
+  defp drop_tail(s) do
+    case :binary.last(s) do
+      c when c in [?;, ?\s] -> drop_tail(binary_part(s, 0, byte_size(s) - 1))
+      _ -> s
+    end
+  rescue
+    ArgumentError -> s
   end
 
   @doc """
@@ -57,6 +82,17 @@ defmodule Kurwa.Mssql.Ssms do
   as TDS tokens, or `:nomatch`. `database` is the session's current one.
   """
   def answer(sql, params \\ %{}, database) do
+    if MapSet.member?(@prefixes, prefix(sql)), do: lookup(sql, params, database), else: :nomatch
+  end
+
+  # The normalised start of `sql`, from no more of it than that takes.
+  defp prefix(sql) do
+    head = binary_part(sql, 0, min(byte_size(sql), 64))
+    normalised = normalise(head)
+    binary_part(normalised, 0, min(@prefix, byte_size(normalised)))
+  end
+
+  defp lookup(sql, params, database) do
     case Map.fetch(@templates, normalise(sql)) do
       {:ok, template} -> {:ok, encode(template, params, database)}
       :error -> :nomatch

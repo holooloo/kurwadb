@@ -285,7 +285,11 @@ defmodule Kurwa.Mssql.Server do
   # either one of the catalog queries SSMS sends (Kurwa.Mssql.Ssms) or SQL
   # for the interpreter.
   defp sql_batch(sql, session) do
-    case Regex.run(~r/^\s*use\s+(?:\[([^\]]+)\]|([A-Za-z_][A-Za-z0-9_]*))\s*;?/i, sql) do
+    case use_prefix?(sql) &&
+           Regex.run(
+             Kurwa.Re.get("^\\s*use\\s+(?:\\[([^\\]]+)\\]|([A-Za-z_][A-Za-z0-9_]*))\\s*;?", "i"),
+             sql
+           ) do
       [whole | names] ->
         db = names |> Enum.reject(&(&1 == "")) |> hd()
         rest = binary_part(sql, byte_size(whole), byte_size(sql) - byte_size(whole))
@@ -313,13 +317,23 @@ defmodule Kurwa.Mssql.Server do
           {[Tds.notice(:error, 911, 16, message), Tds.done(:done, error: true)], session}
         end
 
-      nil ->
+      falsy when falsy in [nil, false] ->
         case Ssms.answer(sql, %{}, session.database) do
           {:ok, tokens} -> {tokens, session}
           :nomatch -> batch(sql, %{}, session, :done)
         end
     end
   end
+
+  # Does the batch start with USE? Asked before the regex, which most batches
+  # would otherwise pay for.
+  defp use_prefix?(<<c, rest::binary>>) when c in [?\s, ?\t, ?\r, ?\n], do: use_prefix?(rest)
+
+  defp use_prefix?(<<u, s, e, sep, _::binary>>)
+       when u in [?u, ?U] and s in [?s, ?S] and e in [?e, ?E] and sep in [?\s, ?\t, ?\r, ?\n, ?[],
+       do: true
+
+  defp use_prefix?(_), do: false
 
   # A request kurwadb fails on is answered with an error, never by dropping the
   # connection: SSMS and friends treat a dropped connection as "cannot connect".

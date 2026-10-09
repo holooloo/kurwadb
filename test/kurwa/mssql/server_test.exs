@@ -102,8 +102,8 @@ defmodule Kurwa.Mssql.ServerTest do
 
   test "with an auth token, the password is the token", %{port: port} do
     original = Application.get_env(:kurwadb, :auth_token)
-    Application.put_env(:kurwadb, :auth_token, "s3cret")
-    on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+    Kurwa.Config.put(:auth_token, "s3cret")
+    on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
 
     {s, %{login: login}} = C.connect(port, password: "s3cret")
     assert :loginack in login

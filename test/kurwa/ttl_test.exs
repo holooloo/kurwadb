@@ -152,13 +152,13 @@ defmodule Kurwa.TtlTest do
       assert {:ok, _} = Store.get(storage_key)
 
       original = Application.get_env(:kurwadb, :tombstone_ttl)
-      Application.put_env(:kurwadb, :tombstone_ttl, 0)
+      Kurwa.Config.put(:tombstone_ttl, 0)
 
       try do
         assert Store.gc() >= 1
         assert Store.get(storage_key) == {:ok, nil}
       after
-        Application.put_env(:kurwadb, :tombstone_ttl, original)
+        Kurwa.Config.put(:tombstone_ttl, original)
       end
     end
   end
@@ -166,14 +166,14 @@ defmodule Kurwa.TtlTest do
   describe "with the extractor cache on" do
     setup do
       original = Application.get_all_env(:kurwadb)
-      Application.put_env(:kurwadb, :cache, true)
-      Application.put_env(:kurwadb, :cache_broadcast, false)
-      Application.put_env(:kurwadb, :cache_ttl, 60_000)
+      Kurwa.Config.put(:cache, true)
+      Kurwa.Config.put(:cache_broadcast, false)
+      Kurwa.Config.put(:cache_ttl, 60_000)
       Extractor.flush()
 
       on_exit(fn ->
         for k <- [:cache, :cache_broadcast, :cache_ttl] do
-          Application.put_env(:kurwadb, k, Keyword.get(original, k))
+          Kurwa.Config.put(k, Keyword.get(original, k))
         end
 
         Extractor.flush()

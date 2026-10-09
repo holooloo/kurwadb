@@ -62,7 +62,7 @@ defmodule Kurwa.Ring do
     start = lower_bound(points, hash(key), 0, total)
     start = if start == total, do: 0, else: start
 
-    walk(points, start, total, want, [], MapSet.new(), 0)
+    walk(points, start, total, want, [], 0, 0)
   end
 
   @doc "First node of the preference list, or `nil` on an empty ring."
@@ -95,17 +95,20 @@ defmodule Kurwa.Ring do
     end
   end
 
-  defp walk(points, idx, total, want, acc, seen, steps) do
-    if MapSet.size(seen) >= want or steps >= total do
-      Enum.reverse(acc)
-    else
-      {_point, node} = elem(points, rem(idx, total))
+  # Clockwise from `idx`, collecting distinct nodes. `want` is at most n -
+  # three, as a rule - so the nodes seen so far are a short list, and `in`
+  # on it is cheaper than building a MapSet for every lookup.
+  defp walk(_points, _idx, total, want, acc, count, steps) when count >= want or steps >= total,
+    do: Enum.reverse(acc)
 
-      if MapSet.member?(seen, node) do
-        walk(points, idx + 1, total, want, acc, seen, steps + 1)
-      else
-        walk(points, idx + 1, total, want, [node | acc], MapSet.put(seen, node), steps + 1)
-      end
-    end
+  defp walk(points, total, total, want, acc, count, steps),
+    do: walk(points, 0, total, want, acc, count, steps)
+
+  defp walk(points, idx, total, want, acc, count, steps) do
+    {_point, node} = elem(points, idx)
+
+    if node in acc,
+      do: walk(points, idx + 1, total, want, acc, count, steps + 1),
+      else: walk(points, idx + 1, total, want, [node | acc], count + 1, steps + 1)
   end
 end

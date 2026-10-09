@@ -10,7 +10,7 @@ defmodule Kurwa.HandoffTest do
 
   setup do
     original = Application.get_env(:kurwadb, :handoff_max_hints)
-    on_exit(fn -> Application.put_env(:kurwadb, :handoff_max_hints, original) end)
+    on_exit(fn -> Kurwa.Config.put(:handoff_max_hints, original) end)
     {:ok, absent: :"absent#{System.unique_integer([:positive])}@nowhere"}
   end
 
@@ -32,7 +32,7 @@ defmodule Kurwa.HandoffTest do
   end
 
   test "a full queue refuses new hints instead of growing without bound", %{absent: absent} do
-    Application.put_env(:kurwadb, :handoff_max_hints, 2)
+    Kurwa.Config.put(:handoff_max_hints, 2)
 
     for _ <- 1..5, do: Handoff.store(absent, record(unique_key("bounded")))
 
@@ -43,7 +43,7 @@ defmodule Kurwa.HandoffTest do
     key = unique_key("update-when-full")
     :ok = Handoff.store(absent, record(key, lamport: 1))
 
-    Application.put_env(:kurwadb, :handoff_max_hints, 1)
+    Kurwa.Config.put(:handoff_max_hints, 1)
 
     :ok = Handoff.store(absent, record(key, lamport: 5, alive?: false))
     :ok = Handoff.store(absent, record(unique_key("rejected")))

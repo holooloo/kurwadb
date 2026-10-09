@@ -208,8 +208,8 @@ defmodule Kurwa.Resp.ServerTest do
 
   test "with an auth token, nothing runs before AUTH", %{socket: s} do
     original = Application.get_env(:kurwadb, :auth_token)
-    Application.put_env(:kurwadb, :auth_token, "s3cret")
-    on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+    Kurwa.Config.put(:auth_token, "s3cret")
+    on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
 
     assert {:error, "NOAUTH" <> _} = command(s, ["PING"])
     assert {:error, "WRONGPASS" <> _} = command(s, ["AUTH", "wrong"])

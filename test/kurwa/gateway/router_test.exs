@@ -220,8 +220,8 @@ defmodule Kurwa.Gateway.RouterTest do
   describe "with an auth token configured" do
     setup do
       original = Application.get_env(:kurwadb, :auth_token)
-      Application.put_env(:kurwadb, :auth_token, "s3cret")
-      on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+      Kurwa.Config.put(:auth_token, "s3cret")
+      on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
       :ok
     end
 

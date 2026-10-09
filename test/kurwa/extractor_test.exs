@@ -13,7 +13,7 @@ defmodule Kurwa.ExtractorTest do
 
     on_exit(fn ->
       for setting <- [:cache, :cache_ttl, :cache_negative_ttl, :cache_broadcast] do
-        Application.put_env(:kurwadb, setting, Keyword.get(original, setting))
+        Kurwa.Config.put(setting, Keyword.get(original, setting))
       end
 
       Extractor.flush()
@@ -51,8 +51,8 @@ defmodule Kurwa.ExtractorTest do
 
   describe "with the cache on" do
     setup do
-      Application.put_env(:kurwadb, :cache, true)
-      Application.put_env(:kurwadb, :cache_broadcast, false)
+      Kurwa.Config.put(:cache, true)
+      Kurwa.Config.put(:cache_broadcast, false)
       :ok
     end
 
@@ -94,8 +94,8 @@ defmodule Kurwa.ExtractorTest do
       present = unique_key("ttl-present")
       absent = unique_key("ttl-absent")
 
-      Application.put_env(:kurwadb, :cache_ttl, 10_000)
-      Application.put_env(:kurwadb, :cache_negative_ttl, 1)
+      Kurwa.Config.put(:cache_ttl, 10_000)
+      Kurwa.Config.put(:cache_negative_ttl, 1)
 
       :ok = Extractor.add(present)
       {:ok, false} = Extractor.member?(absent)
@@ -133,12 +133,12 @@ defmodule Kurwa.ExtractorTest do
       key = unique_key("error")
       before = Extractor.stats()
 
-      Application.put_env(:kurwadb, :strict_quorum, true)
+      Kurwa.Config.put(:strict_quorum, true)
 
       try do
         assert {:error, {:quorum_not_met, _}} = Extractor.member?(key, r: 3)
       after
-        Application.put_env(:kurwadb, :strict_quorum, false)
+        Kurwa.Config.put(:strict_quorum, false)
       end
 
       # the next reader tries the cluster again rather than reusing the failure
@@ -192,8 +192,8 @@ defmodule Kurwa.ExtractorTest do
   end
 
   test "the public API goes through the extractor, so Kurwa.member? is cached too" do
-    Application.put_env(:kurwadb, :cache, true)
-    Application.put_env(:kurwadb, :cache_broadcast, false)
+    Kurwa.Config.put(:cache, true)
+    Kurwa.Config.put(:cache_broadcast, false)
 
     key = unique_key("public")
     :ok = Kurwa.add(key)

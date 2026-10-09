@@ -91,12 +91,12 @@ defmodule Kurwa.Pg.ServerTest do
         original =
           {Application.get_env(:kurwadb, :auth_token), Application.get_env(:kurwadb, :pg_auth)}
 
-        Application.put_env(:kurwadb, :auth_token, "s3cret")
-        Application.put_env(:kurwadb, :pg_auth, unquote(method))
+        Kurwa.Config.put(:auth_token, "s3cret")
+        Kurwa.Config.put(:pg_auth, unquote(method))
 
         on_exit(fn ->
-          Application.put_env(:kurwadb, :auth_token, elem(original, 0))
-          Application.put_env(:kurwadb, :pg_auth, elem(original, 1))
+          Kurwa.Config.put(:auth_token, elem(original, 0))
+          Kurwa.Config.put(:pg_auth, elem(original, 1))
         end)
 
         {socket, startup} = C.connect(port, password: "s3cret")

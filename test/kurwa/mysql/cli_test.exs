@@ -46,8 +46,8 @@ defmodule Kurwa.Mysql.CliTest do
 
   test "caching_sha2_password with a token", context do
     original = Application.get_env(:kurwadb, :auth_token)
-    Application.put_env(:kurwadb, :auth_token, "s3cret")
-    on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+    Kurwa.Config.put(:auth_token, "s3cret")
+    on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
 
     assert {"ok\n1\n", 0} = mysql(context, "SELECT 1 AS ok", [{"MYSQL_PWD", "s3cret"}])
     {out, code} = mysql(context, "SELECT 1", [{"MYSQL_PWD", "nope"}])

@@ -93,12 +93,12 @@ defmodule Kurwa.NamespaceTest do
 
   defp with_strict_quorum(fun) do
     original = Application.get_env(:kurwadb, :strict_quorum)
-    Application.put_env(:kurwadb, :strict_quorum, true)
+    Kurwa.Config.put(:strict_quorum, true)
 
     try do
       fun.()
     after
-      Application.put_env(:kurwadb, :strict_quorum, original)
+      Kurwa.Config.put(:strict_quorum, original)
     end
   end
 end

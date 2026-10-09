@@ -3,7 +3,7 @@ defmodule Kurwa.Pg.CatalogQueryTest do
   # from the registry.
   use ExUnit.Case, async: false
 
-  import Kurwa.TestHelpers, only: [eventually: 1]
+  import Kurwa.TestHelpers, only: [eventually: 2]
 
   alias Kurwa.Pg.Catalog
 
@@ -15,13 +15,9 @@ defmodule Kurwa.Pg.CatalogQueryTest do
     :ok = Kurwa.Namespace.add(schema <> ".events", "e1")
     :ok = Kurwa.Namespace.add("cqplain", "p1")
 
-    eventually(fn ->
-      assert (schema <> ".events") in sets()
-    end)
+    eventually(fn -> (schema <> ".events") in sets() end, 5_000)
 
-    eventually(fn ->
-      assert "cqplain" in sets()
-    end)
+    eventually(fn -> "cqplain" in sets() end, 5_000)
 
     {:ok, schema: schema}
   end

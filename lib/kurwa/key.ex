@@ -21,7 +21,6 @@ defmodule Kurwa.Key do
   @max_name 255
   # ':' because a Redis user's sets are called things like seen:orders, and it
   # is as safe as '.' in a URL path segment and a 9P file name.
-  @name_pattern ~r/^[A-Za-z0-9][A-Za-z0-9_.:\-]*$/
 
   # Reserved namespaces begin with an underscore, which `valid_name?/1` rejects,
   # so nothing a caller can spell will ever land in one.
@@ -69,11 +68,20 @@ defmodule Kurwa.Key do
   both.
   """
   @spec valid_name?(term()) :: boolean()
-  def valid_name?(name) when is_binary(name) do
-    byte_size(name) in 1..@max_name and Regex.match?(@name_pattern, name)
-  end
+  # A byte walk rather than a regex: this runs on every request to a named set.
+  def valid_name?(<<first, rest::binary>> = name)
+      when byte_size(name) <= @max_name and
+             (first in ?a..?z or first in ?A..?Z or first in ?0..?9),
+      do: name_rest?(rest)
 
   def valid_name?(_), do: false
+
+  defp name_rest?(<<c, rest::binary>>)
+       when c in ?a..?z or c in ?A..?Z or c in ?0..?9 or c in [?_, ?., ?:, ?-],
+       do: name_rest?(rest)
+
+  defp name_rest?(<<>>), do: true
+  defp name_rest?(_), do: false
 
   @doc "Longest namespace name the prefix can hold."
   def max_name_length, do: @max_name

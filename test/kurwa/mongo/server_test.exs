@@ -212,8 +212,8 @@ defmodule Kurwa.Mongo.ServerTest do
 
   test "with an auth token, commands wait for SCRAM", %{s: s} do
     original = Application.get_env(:kurwadb, :auth_token)
-    Application.put_env(:kurwadb, :auth_token, "s3cret")
-    on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+    Kurwa.Config.put(:auth_token, "s3cret")
+    on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
 
     assert Bson.get(command(s, [{"find", "x"}, {"filter", {:doc, [{"_id", "a"}]}}]), "code") == 13
     assert Bson.get(command(s, [{"hello", 1}]), "ok") == 1.0

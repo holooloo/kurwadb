@@ -10,7 +10,7 @@ defmodule Kurwa.ProceduresTest do
     original = Application.get_env(:kurwadb, :procedures_dir)
 
     on_exit(fn ->
-      Application.put_env(:kurwadb, :procedures_dir, original)
+      Kurwa.Config.put(:procedures_dir, original)
       Procedures.reload()
     end)
 
@@ -76,7 +76,7 @@ defmodule Kurwa.ProceduresTest do
       go
       """)
 
-      Application.put_env(:kurwadb, :procedures_dir, dir)
+      Kurwa.Config.put(:procedures_dir, dir)
       assert {:ok, 2} = Procedures.reload()
       assert Procedures.names() == ["one", "two"]
       assert %{name: "one"} = Procedures.lookup("DBO.One")
@@ -87,7 +87,7 @@ defmodule Kurwa.ProceduresTest do
 
     test "a broken file is named, and what was loaded stays", %{dir: dir} do
       File.write!(Path.join(dir, "good.sql"), "CREATE PROCEDURE good AS RETURN 0")
-      Application.put_env(:kurwadb, :procedures_dir, dir)
+      Kurwa.Config.put(:procedures_dir, dir)
       assert {:ok, 1} = Procedures.reload()
 
       File.write!(Path.join(dir, "bad.sql"), "CREATE PROCEDURE bad AS WHILE 1 = 1 PRINT 'x'")
@@ -97,7 +97,7 @@ defmodule Kurwa.ProceduresTest do
     end
 
     test "the examples in the repository load" do
-      Application.put_env(:kurwadb, :procedures_dir, Path.expand("examples/procedures"))
+      Kurwa.Config.put(:procedures_dir, Path.expand("examples/procedures"))
       assert {:ok, 3} = Procedures.reload()
       assert Procedures.names() == ["consume", "issue", "issue_and_consume"]
     end
@@ -108,7 +108,7 @@ defmodule Kurwa.ProceduresTest do
         "CREATE PROCEDURE p AS RETURN 0\nGO\nCREATE PROCEDURE p AS RETURN 1"
       )
 
-      Application.put_env(:kurwadb, :procedures_dir, dir)
+      Kurwa.Config.put(:procedures_dir, dir)
       assert {:error, message} = Procedures.reload()
       assert message =~ "defined twice"
     end

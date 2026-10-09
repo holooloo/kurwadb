@@ -46,12 +46,12 @@ defmodule Kurwa.Pg.PsqlTest do
     original =
       {Application.get_env(:kurwadb, :auth_token), Application.get_env(:kurwadb, :pg_tls)}
 
-    Application.put_env(:kurwadb, :auth_token, "s3cret")
-    Application.put_env(:kurwadb, :pg_tls, Keyword.take(server, [:cert, :key, :cacerts]))
+    Kurwa.Config.put(:auth_token, "s3cret")
+    Kurwa.Config.put(:pg_tls, Keyword.take(server, [:cert, :key, :cacerts]))
 
     on_exit(fn ->
-      Application.put_env(:kurwadb, :auth_token, elem(original, 0))
-      Application.put_env(:kurwadb, :pg_tls, elem(original, 1))
+      Kurwa.Config.put(:auth_token, elem(original, 0))
+      Kurwa.Config.put(:pg_tls, elem(original, 1))
     end)
 
     {:ok, tls_server} = ThousandIsland.start_link(port: 0, handler_module: Kurwa.Pg.Server)

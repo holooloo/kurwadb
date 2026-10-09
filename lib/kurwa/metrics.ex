@@ -24,9 +24,22 @@ defmodule Kurwa.Metrics do
   @frontends [:http, :pg, :resp, :mysql, :mongo, :mssql, :ninep]
   @per_frontend 3
   @coordinator [:reads, :writes]
-  @peers :kurwa_metrics_peers
   @clients :kurwa_metrics_clients
   @history 120
+
+  # Counter positions, worked out at compile time: the request path pays for
+  # an atomic add, not for finding where to add. Layout: three per frontend
+  # (requests, errors, time), then coordinator reads and writes, local replica
+  # requests, then two per shard (gets, puts).
+  @frontend_base for {f, i} <- Enum.with_index(@frontends), into: %{}, do: {f, i * @per_frontend}
+  @coordinator_base length(@frontends) * @per_frontend
+  @reads @coordinator_base + 1
+  @writes @coordinator_base + 2
+  @local @coordinator_base + 3
+  @shard_base @coordinator_base + 3
+  @ref_key {__MODULE__, :ref}
+
+  @compile {:inline, bump: 1, ref: 0}
 
   # ----------------------------------------------------------------- clients
 
@@ -42,6 +55,7 @@ defmodule Kurwa.Metrics do
       end
 
     :ets.insert(@clients, {self(), frontend, peer, System.system_time(:second), nil, nil, 0})
+    Process.put(@clients, true)
     GenServer.cast(__MODULE__, {:monitor, self()})
     :ok
   rescue
@@ -64,8 +78,13 @@ defmodule Kurwa.Metrics do
     _ -> :ok
   end
 
+  # Only a process that connect/2 registered has a row: asking the process
+  # dictionary first keeps everyone else (HTTP's request processes) from
+  # paying for a failed update and the exception it raises.
   defp count_client do
-    :ets.update_counter(@clients, self(), {7, 1})
+    if Process.get(@clients) do
+      :ets.update_counter(@clients, self(), {7, 1})
+    end
   rescue
     _ -> :ok
   end
@@ -101,10 +120,11 @@ defmodule Kurwa.Metrics do
   def error(frontend), do: bump(frontend_base(frontend) + 2)
 
   @doc "Counts a coordinator operation: :reads or :writes."
-  def coordinator(kind), do: bump(coordinator_base() + index(@coordinator, kind) + 1)
+  def coordinator(:reads), do: bump(@reads)
+  def coordinator(:writes), do: bump(@writes)
 
   @doc "Counts a replica request answered on this node for its own coordinator."
-  def local_replica, do: bump(coordinator_base() + length(@coordinator) + 1)
+  def local_replica, do: bump(@local)
 
   @doc "Counts replica requests sent to `peer`."
   def sent(peer, n \\ 1), do: peer_bump({:sent, peer}, n)
@@ -113,9 +133,8 @@ defmodule Kurwa.Metrics do
   def received(peer), do: peer_bump({:received, peer}, 1)
 
   @doc "Counts a read (:get) or write (:put) on local shard `index`."
-  def shard(index, kind) do
-    bump(shard_base() + index * 2 + if(kind == :get, do: 1, else: 2))
-  end
+  def shard(index, :get), do: bump(@shard_base + index * 2 + 1)
+  def shard(index, :put), do: bump(@shard_base + index * 2 + 2)
 
   defp bump(i) do
     case ref() do
@@ -124,20 +143,37 @@ defmodule Kurwa.Metrics do
     end
   end
 
-  defp peer_bump(key, n) do
-    :ets.update_counter(@peers, key, n, {key, 0})
+  # Per-peer counts live in a :counters array too - an ETS counter per peer
+  # was one row that every concurrent request wrote, and under load the
+  # requests queued on it. A peer gets a slot the first time it is seen
+  # (`@peers` maps it), which is the only time this goes through the server.
+  @peer_slots 256
+  @peers_ref {__MODULE__, :peers}
+
+  defp peer_bump({kind, peer}, n) do
+    with %{} = slots <- :persistent_term.get(@peers_ref, nil),
+         {:ok, slot} <- peer_slot(slots, peer) do
+      ref = :persistent_term.get({__MODULE__, :peer_counters})
+      :counters.add(ref, slot * 2 + if(kind == :sent, do: 1, else: 2), n)
+    end
+
     :ok
-  rescue
-    ArgumentError -> :ok
   end
 
-  defp ref, do: :persistent_term.get({__MODULE__, :ref}, nil)
+  defp peer_slot(slots, peer) do
+    case slots do
+      %{^peer => slot} -> {:ok, slot}
+      _ -> GenServer.call(__MODULE__, {:peer_slot, peer})
+    end
+  catch
+    :exit, _ -> :error
+  end
 
-  defp frontend_base(frontend), do: index(@frontends, frontend) * @per_frontend
-  defp coordinator_base, do: length(@frontends) * @per_frontend
-  defp shard_base, do: coordinator_base() + length(@coordinator) + 1
+  defp ref, do: :persistent_term.get(@ref_key, nil)
 
-  defp index(list, item), do: Enum.find_index(list, &(&1 == item)) || 0
+  defp frontend_base(frontend), do: Map.get(@frontend_base, frontend, 0)
+  defp coordinator_base, do: @coordinator_base
+  defp shard_base, do: @shard_base
 
   defp size, do: shard_base() + (Config.shards() + 1) * 2
 
@@ -181,8 +217,14 @@ defmodule Kurwa.Metrics do
   @impl true
   def init(_opts) do
     ref = :counters.new(size(), [:write_concurrency])
-    :persistent_term.put({__MODULE__, :ref}, ref)
-    :ets.new(@peers, [:set, :public, :named_table, write_concurrency: true])
+    :persistent_term.put(@ref_key, ref)
+
+    :persistent_term.put(
+      {__MODULE__, :peer_counters},
+      :counters.new(@peer_slots * 2, [:write_concurrency])
+    )
+
+    :persistent_term.put(@peers_ref, %{})
     :ets.new(@clients, [:set, :public, :named_table, write_concurrency: true])
     :erlang.system_flag(:scheduler_wall_time, true)
     Process.send_after(self(), :sample, 1_000)
@@ -235,19 +277,43 @@ defmodule Kurwa.Metrics do
   def handle_info(_other, state), do: {:noreply, state}
 
   @impl true
+  def handle_call(:snapshot, _from, state), do: {:reply, build(state), state}
+
+  def handle_call({:peer_slot, peer}, _from, state) do
+    slots = :persistent_term.get(@peers_ref)
+
+    case slots do
+      %{^peer => slot} ->
+        {:reply, {:ok, slot}, state}
+
+      _ when map_size(slots) >= @peer_slots ->
+        {:reply, :error, state}
+
+      _ ->
+        slot = map_size(slots)
+        :persistent_term.put(@peers_ref, Map.put(slots, peer, slot))
+        {:reply, {:ok, slot}, state}
+    end
+  end
+
+  @impl true
   def handle_cast({:monitor, pid}, state) do
     Process.monitor(pid)
     {:noreply, state}
   end
 
-  @impl true
-  def handle_call(:snapshot, _from, state), do: {:reply, build(state), state}
-
   defp push(list, value), do: Enum.take(list ++ [value], -@history)
 
   defp read_all(ref) do
     counters = for i <- 1..size(), into: %{}, do: {i, :counters.get(ref, i)}
-    peers = :ets.tab2list(@peers) |> Map.new()
+    ref = :persistent_term.get({__MODULE__, :peer_counters})
+
+    peers =
+      for {peer, slot} <- :persistent_term.get(@peers_ref, %{}),
+          {kind, offset} <- [sent: 1, received: 2],
+          into: %{},
+          do: {{kind, peer}, :counters.get(ref, slot * 2 + offset)}
+
     %{counters: counters, peers: peers}
   end
 

@@ -34,14 +34,34 @@ defmodule Kurwa.Sql.Parser do
   @tsql_starts ~w(select insert delete update set use begin commit rollback if declare exec execute print save create drop merge)
   # A query is a catalog query when it reads a catalog table - not when it
   # merely calls pg_catalog.version(), which drivers do on their own.
-  @catalog ~r/\b(FROM|JOIN)\s+(pg_catalog\.|information_schema\.|sys\.|master\.|pg_[a-z_]+\b)/i
+  @catalog "\\b(FROM|JOIN)\\s+(pg_catalog\\.|information_schema\\.|sys\\.|master\\.|pg_[a-z_]+\\b)"
+  # Every catalog query names one of these: a query that has none of them is
+  # not one, and is spared the regex.
+  @catalog_hints [
+    "pg_",
+    "PG_",
+    "Pg_",
+    "information_schema",
+    "INFORMATION_SCHEMA",
+    "sys.",
+    "SYS.",
+    "Sys.",
+    "master.",
+    "MASTER.",
+    "Master."
+  ]
 
   @type error :: {:error, sqlstate :: binary(), message :: binary()}
+
+  defp catalog?(sql),
+    do:
+      :binary.match(sql, Kurwa.Re.pattern(@catalog_hints)) != :nomatch and
+        Regex.match?(Kurwa.Re.get(@catalog, "i"), sql)
 
   @doc "Parses one query string - which may hold several statements - into a list of statements."
   @spec parse(binary(), :pg | :mysql | :tsql) :: {:ok, [term()]} | error()
   def parse(sql, dialect \\ :pg) do
-    if Regex.match?(@catalog, sql) do
+    if catalog?(sql) do
       {:ok, [{:catalog, sql}]}
     else
       with {:ok, tokens} <- lex(sql, dialect) do

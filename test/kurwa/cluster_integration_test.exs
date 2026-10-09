@@ -263,7 +263,7 @@ defmodule Kurwa.ClusterIntegrationTest do
     assert TC.call(one, Kurwa, :add, ["written-alone"]) == :ok
 
     # Strict: refuse rather than quietly lower the durability that was promised.
-    TC.call(one, Application, :put_env, [:kurwadb, :strict_quorum, true])
+    TC.call(one, Kurwa.Config, :put, [:strict_quorum, true])
 
     assert {:error, {:quorum_not_met, read}} = TC.call(one, Kurwa, :fetch, ["survivor"])
     assert read.op == :read

@@ -730,20 +730,23 @@
            <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.
            HTTP figures from 0.9.0 on are measured with four load generators instead of one,
            because one was the ceiling: the same server read 96,900 req/s with one and 133,900
-           with four.</p>
+           with four. 0.17.0 put request counters for the dashboard on every request and
+           was held until it was no slower than 0.16.0 measured the same day; the Redis
+           figure reads lower than 0.11.0's because that day's machine was slower, and
+           0.16.0 measured alongside it read 111k.</p>
       </div>
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.11.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.17.0</th></tr></thead>
           <tbody>
-            <tr><td>Local membership check</td><td class="num">361 ns</td></tr>
-            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~40 µs</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">65k writes/s · 69k reads/s</td></tr>
-            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">131k req/s</td></tr>
-            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">446k keys/s</td></tr>
-            <tr><td>PostgreSQL protocol, prepared statements</td><td class="num">~140k tps</td></tr>
-            <tr><td>Redis protocol, <code>SISMEMBER</code></td><td class="num">~127k req/s</td></tr>
+            <tr><td>Local membership check</td><td class="num">350 ns</td></tr>
+            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~39 µs</td></tr>
+            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">65k writes/s · 68k reads/s</td></tr>
+            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">137k req/s</td></tr>
+            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">544k keys/s</td></tr>
+            <tr><td>PostgreSQL protocol, one client</td><td class="num">50 µs per query</td></tr>
+            <tr><td>Redis protocol, <code>SISMEMBER</code></td><td class="num">~114k req/s</td></tr>
             <tr><td>RAM per key, in-memory engine</td><td class="num">128 B · 152 B</td></tr>
             <tr><td>RAM per key, on-disk engine</td><td class="num">3.0 B</td></tr>
             <tr><td>Anti-entropy digest, 4096 buckets</td><td class="num">32 KB</td></tr>

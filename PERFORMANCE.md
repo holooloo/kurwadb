@@ -29,6 +29,7 @@ bench/pg.sh                                        # the PostgreSQL frontend und
 bench/mysql.sh                                     # the MySQL frontend under mysqlslap
 bench/mongo.sh                                     # the MongoDB frontend under the Node.js driver
 bench/mssql.sh                                     # the SQL Server frontend under tedious, over TLS
+MIX_ENV=test mix run --no-start bench/frontend_latency.exs  # one client through the PG and TDS frontends
 REDIS_DIR=... bench/versus.sh                      # against Redis: HTTP, and RESP with RESP
 ```
 
@@ -286,6 +287,72 @@ single server by a clear margin.
 
 **Latency is level.** p50 is 0.30 ms for kurwadb and 0.28-0.32 ms for Redis
 one request at a time.
+
+## What 0.17.0 changed
+
+0.17.0 put a dashboard on every node, and a dashboard needs numbers: every
+request now bumps counters on its way through - its frontend, the
+coordinator, the replica layer, the shard. That is work on every request,
+and measured against 0.16.0 the first cut of it was a regression, so this
+release was held until it was not. Both versions were measured on
+2026-10-09, alternating A B A B so that the machine's drift lands on both:
+
+| | 0.16.0 | 0.17.0 | |
+|---|---|---|---|
+| `Kurwa.add` | 3.25 µs | 3.09 µs | −5% |
+| `Store.get` (ETS only) | 377 ns | 350 ns | −7% |
+| `Store.put` (shard + WAL) | 1.60 µs | 1.56 µs | −3% |
+| `Placement.targets` | 324 ns | 302 ns | −7% |
+| `GET /k/:key`, keep-alive, 64 conn | 135 000 req/sec | 136 500 req/sec | +1% |
+| `POST /batch`, 100 keys | 5 340 req/sec | 5 440 req/sec — 544 000 keys/sec | +2% |
+| 3 nodes, `add`, single client | 38.6 µs | 38.7 µs | 0% |
+| 3 nodes, `add`, 64 clients | 65 300 ops/sec | 65 200 ops/sec | 0% |
+| 3 nodes, `member?`, 64 clients | 69 100 ops/sec | 67 800 ops/sec | −2% |
+| 3 nodes, `add_new`, 64 clients | 61 100 ops/sec | 61 200 ops/sec | 0% |
+| PostgreSQL, one client, simple query | 49.7 µs | 50.0 µs | +1% |
+| SQL Server, one client, batch | 50.4 µs | 48.8 µs | −3% |
+| SQL Server, one client, `sp_executesql` | 53.4 µs | 55.6 µs | +4% |
+| Redis protocol, `SISMEMBER` | 110 700 req/sec | 113 900 req/sec | +3% |
+
+Medians: two runs of the single-node and HTTP rows, three of the cluster
+rows; the one-client frontend rows are the minimum of seven rounds, median of
+three runs each (`bench/frontend_latency.exs`). The machine was busy that
+day - load average 5 to 15, a video call - and every figure sits inside
+the noise bands above except the ones that moved because of a change below.
+
+What the first cut cost, and what paid for it:
+
+* **Counters on the request path.** Three atomic adds per request, but the
+  first version also looked up each counter's position at runtime. Positions
+  are now compile-time constants, so a count is a `:persistent_term` read and
+  an add.
+* **Per-peer counts were one ETS row.** "Requests sent to node B" was a
+  counter every concurrent request on the node wrote, and under 64 clients
+  they queued on it: writes in the cluster read 7–9% low. Peers now get a slot
+  in a `:counters` array, and the regression is gone.
+* **A failed update was an exception.** Counting a request against its client
+  connection raised and rescued for every process that was not a registered
+  connection - 167 µs. It asks the process dictionary first now: 0.08 µs.
+* **`:binary.match/2` given a list compiles it every call.** The check that
+  sends catalog queries to the catalog was 13 µs on every PostgreSQL query,
+  which pgbench showed as 20% fewer simple-protocol transactions. The pattern
+  is compiled once now, and parsing a query is 1.7 µs, against 2.2 µs in
+  0.16.0, because the catalog regex no longer runs on queries that cannot be
+  catalog queries.
+* **Regex literals are compiled on every use since OTP 28.** The ones on
+  request paths - the catalog check, `USE` in T-SQL, MySQL's column naming -
+  are compiled once through `Kurwa.Re`; a set name is checked by a byte walk
+  instead of a regex (690 ns before).
+* **Settings were read with `Application.get_env/3`**, five or six times per
+  request at about 45 ns each. They are copied into `:persistent_term` at
+  boot (`Kurwa.Config.load/0`) - this is where the single-node gains come
+  from, and it more than pays for the counters.
+* **SSMS's catalog answers** are looked up by a normalised prefix first; a
+  query that is not one costs 0.5 µs to rule out instead of 5.7.
+
+Not measured this time: pgbench and tedious throughput. On that day the same
+version moved by ±40% between runs, which says nothing about a 5% change;
+they go back into the table on a quiet machine.
 
 ## What 0.9.0 changed
 

@@ -280,7 +280,10 @@ defmodule Kurwa.Mysql.Server do
   # reference, which is named by the column. Dictionary cursors key rows by
   # these names, so they follow MySQL rather than PostgreSQL.
   defp name_columns({:rows, columns, rows, tag}, sql) do
-    items = if sql =~ ~r/^\s*select\b/i, do: Kurwa.Pg.Catalog.select_items(sql), else: []
+    items =
+      if Regex.match?(Kurwa.Re.get("^\\s*select\\b", "i"), sql),
+        do: Kurwa.Pg.Catalog.select_items(sql),
+        else: []
 
     columns =
       if length(items) == length(columns) and items != ["*"] do
@@ -294,16 +297,21 @@ defmodule Kurwa.Mysql.Server do
 
   defp name_columns(result, _sql), do: result
 
-  @alias ~r/\s(AS\s+)?(`[^`]+`|"[^"]+"|'[^']+'|[A-Za-z_][A-Za-z0-9_$]*)$/i
-  @column ~r/^(?:(?:`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)\.)*(?:`([^`]+)`|([A-Za-z_][A-Za-z0-9_$]*))$/
+  @alias "\\s(AS\\s+)?(`[^`]+`|\"[^\"]+\"|'[^']+'|[A-Za-z_][A-Za-z0-9_$]*)$"
+  @column "^(?:(?:`[^`]+`|[A-Za-z_][A-Za-z0-9_$]*)\\.)*(?:`([^`]+)`|([A-Za-z_][A-Za-z0-9_$]*))$"
 
   defp mysql_name(item, parsed) do
     cond do
       # an alias, with or without AS: the parser already has it
-      item =~ @alias -> parsed
+      Regex.match?(Kurwa.Re.get(@alias, "i"), item) ->
+        parsed
+
       # a column, possibly qualified: its own name
-      match = Regex.run(@column, item) -> Enum.find(tl(match), &(&1 not in [nil, ""]))
-      true -> item
+      match = Regex.run(Kurwa.Re.get(@column), item) ->
+        Enum.find(tl(match), &(&1 not in [nil, ""]))
+
+      true ->
+        item
     end
   end
 

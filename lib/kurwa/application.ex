@@ -9,6 +9,7 @@ defmodule Kurwa.Application do
 
   @impl true
   def start(_type, _args) do
+    Config.load()
     Config.validate!()
     Kurwa.Clock.init()
     Kurwa.Procedures.load!()

@@ -107,8 +107,8 @@ defmodule Kurwa.Mysql.ServerTest do
   for plugin <- ["caching_sha2_password", "mysql_native_password"] do
     test "with an auth token, the password is the token: #{plugin}", %{port: port} do
       original = Application.get_env(:kurwadb, :auth_token)
-      Application.put_env(:kurwadb, :auth_token, "s3cret")
-      on_exit(fn -> Application.put_env(:kurwadb, :auth_token, original) end)
+      Kurwa.Config.put(:auth_token, "s3cret")
+      on_exit(fn -> Kurwa.Config.put(:auth_token, original) end)
 
       {s, %{auth: :ok}} = C.connect(port, password: "s3cret", plugin: unquote(plugin))
       :gen_tcp.close(s)
