@@ -47,9 +47,28 @@ cluster's members with `KURWA.NODES` - each node's name and the address
 clients reach its RESP frontend at - and asks again every 10 seconds and
 whenever a node fails.
 
-**Routing.** Every kurwadb node coordinates any request, so each request
-goes to the healthy node with the fewest requests in flight, over the least
-busy of its connections (two per node by default).
+**Routing.** Any kurwadb node coordinates any request, but a node holding a
+replica of the key answers its own copy inline, without a network hop. So the
+client also fetches the ring (`KURWA.RING`: vnodes, n and the members),
+rebuilds it exactly as the server does - SHA-256 of `"<node>/<i>"` for each
+of `vnodes` points per member, the key's position the first 8 bytes of
+SHA-256 of its storage key, a 0 byte then the key in the default set, or the
+set name's length and name then the key - and sends each request to the first
+healthy node in the key's preference list. `HasMany` splits its keys by
+replica and sends one pipeline per node, in parallel. With no ring (an older
+server, or `NoRouting`) or no replica reachable, a request goes to the
+healthy node with the fewest requests in flight, over the least busy of its
+connections (two per node by default). `db.Replicas(key, set)` shows where a
+key lives; `go run ./bench/routing` measures routing on against off.
+
+**What it does not buy yet.** Measured on 2026-10-09 against five local nodes
+(n=3, r=2): 84 µs a read either way, and about 40 000 reads/s from 64
+goroutines either way (`go run ./bench/throughput`). A quorum read waits for
+one remote replica whether or not the coordinator holds a copy, and the
+server sends the read to all n replicas, so landing on a replica saves one
+message in three - too little to see. The gain comes when the server reads
+from r replicas instead of all n and the client sends each key to one of
+them; routing is the client half of that, and is right today, but not faster.
 
 **Failover.** A connection that fails marks its node down; its in-flight
 requests fail with `CodeConnection`. `Add`, `Has` and `HasMany` are retried
@@ -86,8 +105,8 @@ no, with its message), `CONNECTION`, `TIMEOUT`, `UNSUPPORTED` or `CLOSED`;
 
 - Over RESP, named-set keys take no TTL and have no atomic `AddNew`: `SADD`
   looks, then writes. Both work on the default set (`SET ... PX`, `SET NX`).
-- Routing does not follow the ring: a request costs one hop from the node it
-  lands on to the replicas, whichever node that is.
+- Routing picks the first healthy replica, not the least busy one: a hot key
+  loads one node.
 - No TLS yet.
 
 ## Tests

@@ -481,8 +481,12 @@ bench/http.sh
 
 kurwadb speaks the PostgreSQL, MySQL, SQL Server, MongoDB and Redis wire
 protocols, so their drivers work. Its own clients add what a generic driver
-cannot: they learn every node from one (`KURWA.NODES` over RESP), spread
-requests over the healthy ones and move off a node that fails.
+cannot: they learn every node from one (`KURWA.NODES` over RESP), rebuild the
+ring (`KURWA.RING`) to send each key straight to one of its replicas, and
+move off a node that fails. Measured, routing is not yet faster - the server
+still sends a read to all n replicas, so landing on one saves one message in
+three; the clients' READMEs have the numbers. `clients/ring_fixture.json`, written by the server's own ring,
+is what both test their placement against.
 
 - [Node.js](clients/js/README.md) - `clients/js`, no dependencies
 - [Go](clients/go/README.md) - `clients/go`, standard library only

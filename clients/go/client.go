@@ -6,10 +6,13 @@
 //	})
 //	first, err := db.AddNew(ctx, "payment:"+id, kurwadb.TTL(24*time.Hour))
 //
-// Any kurwadb node coordinates any request, so the client needs no routing
-// table: it learns the cluster's nodes from one of them (KURWA.NODES), keeps
-// a few pipelined connections to each, sends every request to the healthy
-// node with the fewest in flight, and moves to another node when one fails.
+// Any kurwadb node coordinates any request, but the one that holds a replica
+// of the key answers its own copy without a network hop. So the client learns
+// the cluster's nodes (KURWA.NODES) and its ring (KURWA.RING) from one of
+// them, keeps a few pipelined connections to each, and sends every request
+// to the first healthy replica of its key - or, when the ring is unknown or
+// no replica is reachable, to the healthy node with the fewest in flight. It
+// moves to another node when one fails.
 package kurwadb
 
 import (
@@ -48,6 +51,10 @@ type Options struct {
 	ProbeInterval time.Duration
 	// NoDiscover uses exactly Nodes, without asking the cluster for more.
 	NoDiscover bool
+	// NoRouting sends requests to the least busy healthy node instead of
+	// the first healthy replica of their key (KURWA.RING). Routing needs
+	// discovery, and is off against a server without KURWA.RING.
+	NoRouting bool
 	// Name is the client name the server and its dashboard see.
 	// Default "kurwadb-go/<Version>".
 	Name string
@@ -231,6 +238,7 @@ type Client struct {
 
 	mu     sync.RWMutex
 	nodes  map[string]*node
+	ring   *ring
 	closed bool
 	done   chan struct{}
 	wg     sync.WaitGroup
@@ -381,6 +389,11 @@ func (c *Client) refresh(ctx context.Context, via *node) error {
 	if len(seen) == 0 {
 		return nil
 	}
+	if !c.opts.NoRouting {
+		if err := c.loadRing(ctx, conn); err != nil {
+			return err
+		}
+	}
 	// the node asked stays even if it reports itself by another address
 	c.mu.Lock()
 	var gone []*node
@@ -395,6 +408,79 @@ func (c *Client) refresh(ctx context.Context, via *node) error {
 		n.closeAll()
 	}
 	return nil
+}
+
+// loadRing rebuilds the ring when its members, vnodes or n changed. A server
+// without KURWA.RING leaves routing off.
+func (c *Client) loadRing(ctx context.Context, conn *conn) error {
+	replies, err := conn.send(ctx, [][]string{{"KURWA.RING"}}, c.opts.Timeout)
+	if err != nil {
+		if IsCode(err, CodeServer) {
+			c.mu.Lock()
+			c.ring = nil
+			c.mu.Unlock()
+			return nil
+		}
+		return err
+	}
+	f, ok := replies[0].([]any)
+	if !ok || len(f) < 3 {
+		return nil
+	}
+	vnodes, err1 := toInt(f[0])
+	n, err2 := toInt(f[1])
+	list, _ := f[2].([]any)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	members := make([]string, len(list))
+	for i, m := range list {
+		members[i] = fmt.Sprint(m)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.ring.same(members, vnodes, n) {
+		c.ring = newRing(members, vnodes, n)
+	}
+	return nil
+}
+
+func (c *Client) currentRing() *ring {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ring
+}
+
+// route is the node a request about skey (a storage key) goes to: its first
+// healthy replica, else the least busy healthy node.
+func (c *Client) route(skey []byte, exclude *node) (*node, error) {
+	if r := c.currentRing(); r != nil && skey != nil && !c.opts.NoRouting {
+		nodes := c.snapshot()
+		for _, name := range r.preflist(skey, r.n) {
+			for _, n := range nodes {
+				if n == exclude || !n.isUp() {
+					continue
+				}
+				n.mu.Lock()
+				match := n.name == name
+				n.mu.Unlock()
+				if match {
+					return n, nil
+				}
+			}
+		}
+	}
+	return c.pick(exclude)
+}
+
+// Replicas are the nodes holding key in set ("" is the default set), first
+// preferred; nil without a ring.
+func (c *Client) Replicas(key, set string) []string {
+	r := c.currentRing()
+	if r == nil {
+		return nil
+	}
+	return r.preflist(storageKey(set, key), r.n)
 }
 
 func (c *Client) probe() {
@@ -445,11 +531,11 @@ func (c *Client) pick(exclude *node) (*node, error) {
 
 // run sends commands to one node. A connection failure marks the node down;
 // an idempotent request is then tried once more on another node.
-func (c *Client) run(ctx context.Context, commands [][]string, idempotent bool) ([]any, error) {
+func (c *Client) run(ctx context.Context, commands [][]string, idempotent bool, skey []byte) ([]any, error) {
 	if c.isClosed() {
 		return nil, errorf(CodeClosed, "", "kurwadb: client is closed")
 	}
-	n, err := c.pick(nil)
+	n, err := c.route(skey, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -476,10 +562,71 @@ func (c *Client) run(ctx context.Context, commands [][]string, idempotent bool) 
 				_ = c.refresh(rctx, nil)
 			}()
 		}
-		if n, err = c.pick(n); err != nil {
+		if n, err = c.route(skey, n); err != nil {
 			return nil, err
 		}
 	}
+}
+
+// runEach runs one command per key, each on its own key's replica: keys
+// bound for the same node go as one pipeline, the pipelines in parallel.
+// Replies come back in the keys' order.
+func (c *Client) runEach(ctx context.Context, set string, keys []string, command func(string) []string) ([]any, error) {
+	if c.currentRing() == nil || c.opts.NoRouting {
+		cmds := make([][]string, len(keys))
+		for i, k := range keys {
+			cmds[i] = command(k)
+		}
+		return c.run(ctx, cmds, true, nil)
+	}
+	type group struct {
+		skey []byte
+		idx  []int
+	}
+	groups := map[*node]*group{}
+	var order []*group
+	for i, k := range keys {
+		skey := storageKey(set, k)
+		n, err := c.route(skey, nil)
+		if err != nil {
+			return nil, err
+		}
+		g, ok := groups[n]
+		if !ok {
+			g = &group{skey: skey}
+			groups[n] = g
+			order = append(order, g)
+		}
+		g.idx = append(g.idx, i)
+	}
+	out := make([]any, len(keys))
+	errs := make([]error, len(order))
+	var wg sync.WaitGroup
+	for gi, g := range order {
+		wg.Add(1)
+		go func(gi int, g *group) {
+			defer wg.Done()
+			cmds := make([][]string, len(g.idx))
+			for j, i := range g.idx {
+				cmds[j] = command(keys[i])
+			}
+			replies, err := c.run(ctx, cmds, true, g.skey)
+			if err != nil {
+				errs[gi] = err
+				return
+			}
+			for j, i := range g.idx {
+				out[i] = replies[j]
+			}
+		}(gi, g)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 // ------------------------------------------------------------------ API
@@ -510,7 +657,7 @@ func px(opts []Option) ([]string, bool) {
 // Add adds key to the default set.
 func (c *Client) Add(ctx context.Context, key string, opts ...Option) error {
 	ttl, _ := px(opts)
-	_, err := c.run(ctx, [][]string{append([]string{"SET", key, "1"}, ttl...)}, true)
+	_, err := c.run(ctx, [][]string{append([]string{"SET", key, "1"}, ttl...)}, true, storageKey("", key))
 	return err
 }
 
@@ -520,7 +667,7 @@ func (c *Client) Add(ctx context.Context, key string, opts ...Option) error {
 // first attempt.
 func (c *Client) AddNew(ctx context.Context, key string, opts ...Option) (bool, error) {
 	ttl, _ := px(opts)
-	r, err := c.run(ctx, [][]string{append([]string{"SET", key, "1", "NX"}, ttl...)}, false)
+	r, err := c.run(ctx, [][]string{append([]string{"SET", key, "1", "NX"}, ttl...)}, false, storageKey("", key))
 	if err != nil {
 		return false, err
 	}
@@ -529,7 +676,7 @@ func (c *Client) AddNew(ctx context.Context, key string, opts ...Option) (bool, 
 
 // Has reports whether key is in the default set.
 func (c *Client) Has(ctx context.Context, key string) (bool, error) {
-	r, err := c.run(ctx, [][]string{{"EXISTS", key}}, true)
+	r, err := c.run(ctx, [][]string{{"EXISTS", key}}, true, storageKey("", key))
 	if err != nil {
 		return false, err
 	}
@@ -541,11 +688,7 @@ func (c *Client) HasMany(ctx context.Context, keys []string) ([]bool, error) {
 	if len(keys) == 0 {
 		return []bool{}, nil
 	}
-	cmds := make([][]string, len(keys))
-	for i, k := range keys {
-		cmds[i] = []string{"EXISTS", k}
-	}
-	r, err := c.run(ctx, cmds, true)
+	r, err := c.runEach(ctx, "", keys, func(k string) []string { return []string{"EXISTS", k} })
 	if err != nil {
 		return nil, err
 	}
@@ -558,7 +701,7 @@ func (c *Client) HasMany(ctx context.Context, keys []string) ([]bool, error) {
 
 // Delete removes key. True if it was there.
 func (c *Client) Delete(ctx context.Context, key string) (bool, error) {
-	r, err := c.run(ctx, [][]string{{"DEL", key}}, false)
+	r, err := c.run(ctx, [][]string{{"DEL", key}}, false, storageKey("", key))
 	if err != nil {
 		return false, err
 	}
@@ -607,7 +750,7 @@ func (s *Set) Add(ctx context.Context, key string, opts ...Option) error {
 	if _, ttl := px(opts); ttl {
 		return errorf(CodeUnsupported, "", "kurwadb: a TTL on a named-set key is not available over RESP; use the default set")
 	}
-	_, err := s.c.run(ctx, [][]string{{"SADD", s.name, key}}, true)
+	_, err := s.c.run(ctx, [][]string{{"SADD", s.name, key}}, true, storageKey(s.name, key))
 	return err
 }
 
@@ -618,7 +761,7 @@ func (s *Set) AddNew(ctx context.Context, key string, opts ...Option) (bool, err
 
 // Has reports whether key is in the set.
 func (s *Set) Has(ctx context.Context, key string) (bool, error) {
-	r, err := s.c.run(ctx, [][]string{{"SISMEMBER", s.name, key}}, true)
+	r, err := s.c.run(ctx, [][]string{{"SISMEMBER", s.name, key}}, true, storageKey(s.name, key))
 	if err != nil {
 		return false, err
 	}
@@ -630,11 +773,10 @@ func (s *Set) HasMany(ctx context.Context, keys []string) ([]bool, error) {
 	if len(keys) == 0 {
 		return []bool{}, nil
 	}
-	r, err := s.c.run(ctx, [][]string{append([]string{"SMISMEMBER", s.name}, keys...)}, true)
+	items, err := s.c.runEach(ctx, s.name, keys, func(k string) []string { return []string{"SISMEMBER", s.name, k} })
 	if err != nil {
 		return nil, err
 	}
-	items, _ := r[0].([]any)
 	out := make([]bool, len(items))
 	for i, v := range items {
 		out[i] = truthy(v)
@@ -644,7 +786,7 @@ func (s *Set) HasMany(ctx context.Context, keys []string) ([]bool, error) {
 
 // Delete removes key. True if it was there.
 func (s *Set) Delete(ctx context.Context, key string) (bool, error) {
-	r, err := s.c.run(ctx, [][]string{{"SREM", s.name, key}}, false)
+	r, err := s.c.run(ctx, [][]string{{"SREM", s.name, key}}, false, storageKey(s.name, key))
 	if err != nil {
 		return false, err
 	}

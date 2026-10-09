@@ -36,7 +36,10 @@ defmodule Kurwa.Resp.Commands do
 
   `KURWA.NODES` is kurwadb's own: `[node, host, port, up]` for every member,
   with the address clients reach its RESP frontend at. kurwadb's clients
-  (`clients/js`) discover the cluster with it.
+  (`clients/js`, `clients/go`) discover the cluster with it. `KURWA.RING`
+  gives them `[vnodes, n, members]` to rebuild the ring and send each key to
+  one of its replicas; `KURWA.PREFLIST set key` (empty set: the default one)
+  is the server's own preference list, for them to test theirs against.
   """
 
   alias Kurwa.Coordinator
@@ -139,6 +142,27 @@ defmodule Kurwa.Resp.Commands do
         {{:ok, entry}, _node} -> entry
         {_, node} -> [to_string(node), host_of(node), Kurwa.Config.get(:resp_port), false]
       end)
+
+    {nodes, s}
+  end
+
+  # The ring, for a client that sends each key to one of its replicas:
+  # [vnodes, n, members]. Members are the names KURWA.NODES reports; a
+  # client rebuilds the ring from them exactly as Kurwa.Ring.new/2 does.
+  defp dispatch("KURWA.RING", [], s) do
+    ring = Kurwa.Cluster.ring()
+    {[ring.vnodes, Kurwa.Config.n(), Enum.map(Kurwa.Ring.nodes(ring), &to_string/1)], s}
+  end
+
+  # A key's preference list as the server computes it, for clients to test
+  # their own against. An empty set name is the default set.
+  defp dispatch("KURWA.PREFLIST", [set, key], s) do
+    storage = if set == "", do: Key.encode(nil, key), else: Key.encode(set!(set), key)
+
+    nodes =
+      Kurwa.Cluster.ring()
+      |> Kurwa.Ring.preflist(storage, Kurwa.Config.n())
+      |> Enum.map(&to_string/1)
 
     {nodes, s}
   end

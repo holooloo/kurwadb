@@ -90,6 +90,21 @@ defmodule Kurwa.Resp.ServerTest do
     assert up in [1, true]
   end
 
+  test "KURWA.RING and KURWA.PREFLIST describe placement as the server computes it",
+       %{socket: s} do
+    assert [vnodes, n, members] = command(s, ["KURWA.RING"])
+    ring = Kurwa.Cluster.ring()
+    assert vnodes == ring.vnodes and n == Kurwa.Config.n()
+    assert members == Enum.map(Kurwa.Ring.nodes(ring), &to_string/1)
+    assert [[name | _]] = command(s, ["KURWA.NODES"])
+    assert name in members
+
+    expected = fn storage -> ring |> Kurwa.Ring.preflist(storage, n) |> Enum.map(&to_string/1) end
+    assert command(s, ["KURWA.PREFLIST", "", "k1"]) == expected.(Kurwa.Key.encode(nil, "k1"))
+    assert command(s, ["KURWA.PREFLIST", "seen", "k1"]) == expected.(Kurwa.Key.encode("seen", "k1"))
+    assert {:error, _} = command(s, ["KURWA.PREFLIST", "_sets", "k1"])
+  end
+
   test "ping, echo, select 0, and an inline command", %{socket: s} do
     assert command(s, ["PING"]) == {:simple, "PONG"}
     assert command(s, ["ECHO", "hi"]) == "hi"

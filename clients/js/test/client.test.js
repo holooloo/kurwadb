@@ -118,3 +118,54 @@ test("requests move to another node when one dies", async () => {
   await c.close();
   await again.kill();
 });
+
+// ------------------------------------------------------------------ routing
+
+import { readFileSync } from "node:fs";
+import { Ring, storageKey } from "../src/ring.js";
+
+test("the ring reproduces the server's preference lists bit for bit", () => {
+  // clients/ring_fixture.json is written by the server's own Kurwa.Ring.
+  const { cases } = JSON.parse(readFileSync(new URL("../../ring_fixture.json", import.meta.url)));
+  assert.ok(cases.length > 500);
+  const rings = new Map();
+  for (const c of cases) {
+    const id = `${c.members.join(",")}|${c.vnodes}|${c.n}`;
+    if (!rings.has(id)) rings.set(id, new Ring(c.members, c.vnodes, c.n));
+    assert.deepEqual(rings.get(id).preflist(storageKey(c.set, c.key)), c.preflist, `${c.set}/${c.key}`);
+  }
+});
+
+test("routing agrees with the live server, and sends a key to its replica", async () => {
+  const conn = await connect({ nodes: server.nodes, password: server.password });
+  try {
+    const node = conn.nodes()[0];
+    assert.ok(conn.ring, "the server answers KURWA.RING");
+    for (let i = 0; i < 200; i++) {
+      const k = `route:${i}`;
+      const set = i % 2 ? "" : "seen";
+      const [replies] = await conn.run([["KURWA.PREFLIST", set, k]], { idempotent: true });
+      assert.deepEqual(conn.replicas(k, set || null), replies.map(String), k);
+    }
+    assert.ok(node.name);
+    // a routed request reaches the first replica: with every node up, it
+    // is the head of the preference list
+    const k = "route:probe";
+    const first = conn.replicas(k)[0];
+    assert.ok(conn.nodes().some((n) => n.name === first));
+  } finally {
+    await conn.close();
+  }
+});
+
+test("routing off still works, and hasMany splits by replica", async () => {
+  const off = await connect({ nodes: server.nodes, password: server.password, routing: false });
+  const keys = Array.from({ length: 50 }, (_, i) => `${id()}:${i}`);
+  await Promise.all(keys.slice(0, 25).map((k) => db.add(k)));
+  assert.deepEqual(await db.hasMany(keys), keys.map((_, i) => i < 25));
+  assert.deepEqual(await off.hasMany(keys), keys.map((_, i) => i < 25));
+  const set = db.set("jsroute");
+  await set.add(keys[0]);
+  assert.deepEqual(await set.hasMany(keys.slice(0, 3)), [true, false, false]);
+  await off.close();
+});
