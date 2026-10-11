@@ -242,6 +242,7 @@
     font-weight: 700; letter-spacing: -0.02em; text-wrap: balance;
   }
   p { max-width: 66ch; text-wrap: pretty; }
+  h3 { margin: 34px 0 10px; font-size: 1.12rem; font-weight: 700; letter-spacing: -0.01em; }
 
   /* --------------------------------------------------------------- record */
   .records { display: grid; gap: 16px; max-width: 64ch; }
@@ -366,6 +367,47 @@
       transition-duration: 0.001ms !important;
     }
   }
+
+  /* ------------------------------------------------------------ motion */
+  /* Sections rise in as they scroll into view; script adds .reveal, so
+     without it (or with reduced motion) everything is simply there. */
+  .reveal { opacity: 0; transform: translateY(22px); transition: opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1); }
+  .reveal.in { opacity: 1; transform: none; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 14px; margin: 22px 0 8px; }
+  .stat-card { background: var(--surface); border: 2.5px solid var(--outline); border-radius: 14px; box-shadow: 4px 4px 0 var(--shadow); padding: 14px 14px 12px; }
+  .stat-card b { display: block; white-space: nowrap; font-family: "IBM Plex Mono", monospace; font-size: clamp(1.05rem, 1.9vw, 1.3rem); font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; line-height: 1.15; }
+  .stat-card span { font-size: 0.8rem; color: var(--muted); }
+
+  .bars { margin: 14px 0 6px; }
+  .bars .bar-row { display: grid; grid-template-columns: 96px minmax(0, 1fr) 118px; gap: 10px; align-items: center; padding: 5px 0; }
+  .bars .ver { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; color: var(--muted); }
+  .bars .track { height: 18px; background: var(--sunken); border: 2px solid var(--outline); border-radius: 999px; overflow: hidden; }
+  .bars .track i { display: block; height: 100%; width: 0; background: var(--teal); border-right: 2px solid var(--outline); border-radius: 999px; transition: width 1.3s cubic-bezier(.2,.8,.2,1); }
+  .bars .bar-row.hot .track i { background: var(--accent); }
+  .bars.in .track i { width: var(--w); }
+  .bars .val { font-family: "IBM Plex Mono", monospace; font-size: 0.82rem; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .bars-note { font-size: 0.82rem; color: var(--muted); margin: 4px 0 18px; }
+  @media (max-width: 560px) { .bars .bar-row { grid-template-columns: 70px minmax(0, 1fr) 92px; } }
+
+  .fanout { padding: 14px 14px 10px; background: var(--surface); border: 2.5px solid var(--outline); border-radius: 16px; box-shadow: 5px 5px 0 var(--shadow); margin: 14px 0 10px; }
+  .fanout svg { display: block; width: 100%; height: auto; }
+  .fanout-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 4px 2px; }
+  .seg { display: inline-flex; border: 2.5px solid var(--outline); border-radius: 12px; overflow: hidden; box-shadow: 3px 3px 0 var(--shadow); }
+  .seg button { font: 600 0.86rem "IBM Plex Sans", sans-serif; padding: 7px 14px; border: 0; background: var(--surface); color: var(--ink); cursor: pointer; }
+  .seg button + button { border-left: 2.5px solid var(--outline); }
+  .seg button[aria-pressed="true"] { background: var(--sun); }
+  .fanout-read { font-family: "IBM Plex Mono", monospace; font-size: 0.8rem; color: var(--muted); }
+  .fanout-read b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .fo-node rect { stroke: var(--outline); stroke-width: 2.5; }
+  .fo-node text { font: 600 12px "IBM Plex Sans", sans-serif; fill: var(--ink); text-anchor: middle; }
+  .fo-node .sub { font: 400 10px "IBM Plex Mono", monospace; fill: var(--muted); }
+  .fo-link { stroke: var(--outline); stroke-width: 2; stroke-dasharray: 3 6; opacity: .45; fill: none; }
+  .fo-link.idle { opacity: .15; }
+  .fo-msg { stroke: var(--outline); stroke-width: 1.5; }
+  .fo-msg.ask { fill: var(--teal); }
+  .fo-msg.reply { fill: var(--leaf); }
+  .fo-msg.client { fill: var(--accent); }
 </style>
 </head>
 <body>
@@ -726,39 +768,109 @@
         <p><b>A release that is slower than the one before it is a broken release.</b>
            The regression is the bug, not the new baseline.</p>
         <p>Which is only worth saying if it can be checked, so every figure here comes
-           from a script in <code>bench/</code> and every version gets a column in
-           <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>.
-           HTTP figures from 0.9.0 on are measured with four load generators instead of one,
-           because one was the ceiling: the same server read 96,900 req/s with one and 133,900
-           with four. 0.17.0 put request counters for the dashboard on every request and
-           was held until it was no slower than 0.16.0 measured the same day; the Redis
-           figure reads lower than 0.11.0's because that day's machine was slower, and
-           0.16.0 measured alongside it read 111k. 0.18.0 reads from r replicas instead of
-           all n: half again as many reads per second across three nodes.</p>
+           from a script in <code>bench/</code>, every version gets a column in
+           <a href="https://github.com/holooloo/kurwadb/blob/main/PERFORMANCE.md">PERFORMANCE.md</a>,
+           and when two versions are compared they are measured on the same day, in turns,
+           so the machine's mood lands on both. 0.17.0 was held back twice by that rule:
+           counters for the dashboard cost 7% on reads and 20% on PostgreSQL until they
+           did not.</p>
       </div>
 
+      <div class="stats">
+        <div class="stat-card"><b data-count="350" data-unit=" ns">350 ns</b><span>a local membership check</span></div>
+        <div class="stat-card"><b data-count="98600" data-unit="/s">98 600/s</b><span>quorum reads, 3 nodes, 64 clients</span></div>
+        <div class="stat-card"><b data-count="136500" data-unit="/s">136 500/s</b><span><code>GET /k/:key</code>, one node</span></div>
+        <div class="stat-card"><b data-count="544000" data-unit="/s">544 000/s</b><span>keys through <code>POST /batch</code></span></div>
+        <div class="stat-card"><b data-count="3" data-unit=".0 B">3.0 B</b><span>RAM per key, on-disk engine</span></div>
+      </div>
+
+      <h3>Release over release</h3>
+      <p>Reads a second across three nodes with a quorum of two, 64 concurrent clients,
+         each version measured with <code>bench/cluster.exs</code>:</p>
+      <div class="bars" data-bars>
+        <div class="bar-row"><span class="ver">0.1.0</span><span class="track"><i style="--w:60%"></i></span><span class="val">59 100</span></div>
+        <div class="bar-row"><span class="ver">0.4.0</span><span class="track"><i style="--w:61.8%"></i></span><span class="val">60 900</span></div>
+        <div class="bar-row"><span class="ver">0.8.0</span><span class="track"><i style="--w:48.7%"></i></span><span class="val">48 000 *</span></div>
+        <div class="bar-row"><span class="ver">0.9.0</span><span class="track"><i style="--w:69.6%"></i></span><span class="val">68 600</span></div>
+        <div class="bar-row"><span class="ver">0.11.0</span><span class="track"><i style="--w:68.7%"></i></span><span class="val">67 700</span></div>
+        <div class="bar-row"><span class="ver">0.17.0</span><span class="track"><i style="--w:68.8%"></i></span><span class="val">67 800</span></div>
+        <div class="bar-row hot"><span class="ver">0.18.0</span><span class="track"><i style="--w:100%"></i></span><span class="val">98 600</span></div>
+      </div>
+      <p class="bars-note">* measured after an OS update that slowed every version on this
+         machine; 0.4.0 re-measured the same day read 44 300. 0.9.0 started one process per
+         quorum instead of two; 0.18.0 stopped asking replicas it did not need.</p>
+
+      <p>And one key, in-process, on one node - <code>Kurwa.member?</code>, lower is better:</p>
+      <div class="bars" data-bars>
+        <div class="bar-row"><span class="ver">0.1.0</span><span class="track"><i style="--w:100%"></i></span><span class="val">3.15 µs</span></div>
+        <div class="bar-row"><span class="ver">0.4.0</span><span class="track"><i style="--w:93%"></i></span><span class="val">2.94 µs</span></div>
+        <div class="bar-row"><span class="ver">0.9.0</span><span class="track"><i style="--w:71%"></i></span><span class="val">2.23 µs</span></div>
+        <div class="bar-row"><span class="ver">0.11.0</span><span class="track"><i style="--w:39%"></i></span><span class="val">1.24 µs</span></div>
+        <div class="bar-row hot"><span class="ver">0.17.0</span><span class="track"><i style="--w:33%"></i></span><span class="val">1.03 µs</span></div>
+      </div>
+      <p class="bars-note">0.11.0 answers inline when the only replica is the node itself;
+         0.17.0 reads its settings from <code>:persistent_term</code> instead of
+         <code>Application.get_env</code>, five or six times a request.</p>
+
+      <h3 id="fanout">Why 0.18.0 reads half again as fast</h3>
+      <p>A quorum read needs r answers. Until 0.18.0 the coordinator asked all n replicas
+         and kept the first r; but any r replicas overlap every write's w, because
+         r + w &gt; n, so the extra answers were only traffic. Now it asks r - itself first
+         when it holds a copy, since it answers inline - and the rest only if those are
+         slower than 10 ms. Same answer, a third of the messages:</p>
+      <div class="fanout">
+        <svg id="fanout" viewBox="0 0 640 220" role="img" aria-labelledby="fanout-title">
+          <title id="fanout-title">A client reads a key through node A, which holds a copy; asking all n, A also asks B and C; asking r, only B</title>
+          <path class="fo-link" id="fo-cl" d="M 92 110 L 222 110"/>
+          <path class="fo-link" id="fo-ab" d="M 300 96 Q 400 40 498 52"/>
+          <path class="fo-link" id="fo-ac" d="M 300 124 Q 400 180 498 168"/>
+          <g class="fo-node"><rect x="18" y="86" width="74" height="48" rx="10" fill="var(--accent-soft)"/><text x="55" y="108">client</text><text class="sub" x="55" y="123">has(key)</text></g>
+          <g class="fo-node"><rect x="222" y="78" width="80" height="64" rx="12" fill="var(--sun-soft)"/><text x="262" y="104">node A</text><text class="sub" x="262" y="119">coordinator</text><text class="sub" x="262" y="132">+ its copy</text></g>
+          <g class="fo-node"><rect x="498" y="28" width="80" height="50" rx="12" fill="var(--teal-soft)"/><text x="538" y="51">node B</text><text class="sub" x="538" y="66">replica</text></g>
+          <g class="fo-node"><rect x="498" y="144" width="80" height="50" rx="12" fill="var(--teal-soft)" id="fo-c-box"/><text x="538" y="167">node C</text><text class="sub" x="538" y="182" id="fo-c-sub">replica</text></g>
+          <g id="fo-msgs"></g>
+        </svg>
+        <div class="fanout-bar">
+          <span class="seg" role="group" aria-label="Read fan-out">
+            <button type="button" id="fo-all" aria-pressed="false">Ask all n (≤0.17)</button>
+            <button type="button" id="fo-r" aria-pressed="true">Ask r (0.18)</button>
+          </span>
+          <span class="fanout-read">replicas asked over the network per read: <b id="fo-count">1</b> · reads/s, 3 nodes, 64 clients: <b id="fo-rate">98 600</b></span>
+        </div>
+      </div>
+      <p>Measured both ways the same day with <code>KURWA_READ_FANOUT=all</code> against the
+         default: reads under load <b>63 900 → 98 600 a second (+54%)</b>, one read alone
+         <b>39.7 → 36.7 µs</b>, writes unchanged - they still go to all n, as they must.
+         kurwadb's own JavaScript and Go clients compute the ring and send each key to one
+         of its replicas, which on five nodes takes reads from 44 500 to 55 400 a second.</p>
+
+      <h3>Every protocol, one path</h3>
+      <p>One node, 64 clients, the protocol's own benchmark tool driving it. They land close
+         together because none of them is what a request costs - the path behind the wire
+         is the same for all of them:</p>
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.18.0</th></tr></thead>
+          <thead><tr><th scope="col">Protocol</th><th scope="col">Driven by</th><th scope="col">Membership checks / sec</th></tr></thead>
           <tbody>
-            <tr><td>Local membership check</td><td class="num">350 ns</td></tr>
-            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~37 µs read · ~40 µs write</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">~60k writes/s · 99k reads/s</td></tr>
-            <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">137k req/s</td></tr>
-            <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">544k keys/s</td></tr>
-            <tr><td>PostgreSQL protocol, one client</td><td class="num">50 µs per query</td></tr>
-            <tr><td>Redis protocol, <code>SISMEMBER</code></td><td class="num">~114k req/s</td></tr>
-            <tr><td>RAM per key, in-memory engine</td><td class="num">128 B · 152 B</td></tr>
-            <tr><td>RAM per key, on-disk engine</td><td class="num">3.0 B</td></tr>
-            <tr><td>Anti-entropy digest, 4096 buckets</td><td class="num">32 KB</td></tr>
+            <tr><td>HTTP</td><td><code>ab</code> ×4, keep-alive</td><td class="num">136 500</td></tr>
+            <tr><td>PostgreSQL, prepared</td><td><code>pgbench</code></td><td class="num">135 700 – 146 700</td></tr>
+            <tr><td>MySQL</td><td><code>mysqlslap</code></td><td class="num">128 400 – 133 200</td></tr>
+            <tr><td>Redis (RESP)</td><td><code>redis-benchmark</code></td><td class="num">110 700 – 129 000</td></tr>
+            <tr><td>MongoDB</td><td>Node.js driver</td><td class="num">75 500 – 79 500</td></tr>
+            <tr><td>SQL Server, over TLS</td><td>tedious</td><td class="num">45 700 – 55 400</td></tr>
           </tbody>
         </table>
       </div>
-      <h2 style="margin-top:34px">Against Redis, on the same machine</h2>
-      <p>Not our numbers against someone's published ones — Redis 8.0.3 built here, both
-         servers run one at a time, and since kurwadb speaks RESP, the same
-         <code>redis-benchmark</code> drives both: four threads, 64 connections, two runs on
-         6 October 2026. <code>bench/versus.sh</code> reproduces it.</p>
+      <p>MongoDB and SQL Server read lower for their clients' sake, not the server's: a
+         Node.js driver is one thread per process, and tedious does TLS in JavaScript.
+         On the server, one <code>findOne</code> is 5.7 µs and one <code>sp_executesql</code>
+         lookup about the same.</p>
+
+      <h3>Against Redis, on the same machine</h3>
+      <p>Not our numbers against someone's published ones - Redis 8.0.3 built here, both
+         servers run one at a time, and since kurwadb speaks RESP the same
+         <code>redis-benchmark</code> drives both: four threads, 64 connections, runs on 6 and
+         9 October 2026. <code>bench/versus.sh</code> reproduces it.</p>
 
       <div class="scroll">
         <table>
@@ -766,28 +878,26 @@
             <tr><th scope="col">1M keys, 13 bytes each</th><th scope="col">RAM per key</th><th scope="col"><code>SISMEMBER</code>/sec</th><th scope="col">pipelined ×16</th></tr>
           </thead>
           <tbody>
-            <tr><td>Redis 8.0.3</td><td class="num">30.2 B</td><td class="num">143–160k</td><td class="num">1.64–1.83M</td></tr>
-            <tr><td>kurwadb in-memory, RESP</td><td class="num">128.1 B</td><td class="num">125–129k</td><td class="num">0.74–0.82M</td></tr>
-            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">124–132k</td><td class="num">—</td></tr>
+            <tr><td>Redis 8.0.3</td><td class="num">30.2 B</td><td class="num">129–160k</td><td class="num">1.31–1.83M</td></tr>
+            <tr><td>kurwadb in-memory, RESP</td><td class="num">128.1 B</td><td class="num">111–129k</td><td class="num">0.61–0.91M</td></tr>
+            <tr><td>kurwadb in-memory, HTTP + JSON</td><td class="num">128.1 B</td><td class="num">124–137k</td><td class="num">—</td></tr>
             <tr><td>kurwadb on-disk, hit from disk</td><td class="num">3.0 B</td><td class="num">93k</td><td class="num">—</td></tr>
             <tr><td>kurwadb on-disk, miss</td><td class="num">3.0 B</td><td class="num">119k</td><td class="num">—</td></tr>
-            <tr><td>kurwadb, 3-node quorum</td><td class="num">—</td><td class="num">68k</td><td class="num">—</td></tr>
+            <tr><td>kurwadb, 3-node quorum (0.18.0)</td><td class="num">—</td><td class="num">99k</td><td class="num">—</td></tr>
           </tbody>
         </table>
       </div>
-      <p>Redis is <b>4× more memory-efficient</b> than our in-memory engine — part of that
-         is the Lamport stamp, origin, tombstone flag and expiry we store and it does not,
-         the rest is BEAM overhead. The on-disk engine is <b>10× better than Redis</b>,
-         because what it keeps in RAM is a Bloom filter rather than the keys. On throughput
-         <b>Redis is the faster single server</b>: 15–20% one request at a time, and 2.2×
-         pipelined. This page once blamed the gap on HTTP and JSON; with the same client
-         and the same protocol on both sides it is still there, so it is the cost of a
-         request inside kurwadb, not the wire. The on-disk engine, a million keys loaded,
-         answers a hit from disk at 75% of the in-memory rate and a miss at the same
-         speed.</p>
+      <p>Redis is <b>4× more memory-efficient</b> than the in-memory engine - part of that is
+         the Lamport stamp, origin, tombstone flag and expiry we store and it does not, the
+         rest is BEAM overhead. The on-disk engine is <b>10× better than Redis</b>, because
+         what it keeps in RAM is a Bloom filter rather than the keys. On throughput
+         <b>Redis is the faster single server</b>: 10–20% one request at a time, 1.5–2×
+         pipelined, with the same client and protocol on both sides, so it is the cost of a
+         request inside kurwadb, not the wire. A three-node kurwadb, every read confirmed by
+         two machines, now answers at three quarters of single-node Redis.</p>
       <p>So the case for it is not speed on one node. It is a set that outgrows RAM and is
          still answered exactly, writes acknowledged by two machines instead of one, and no
-         primary to fail over from —
+         primary to fail over from -
          <a href="article.html#where-this-should-beat-what-people-use-today">the long version</a>.</p>
 
       <p>Apple M4, 10 cores; all three nodes share that one CPU, <code>n=3 r=2 w=2</code>.
@@ -860,6 +970,11 @@ member kurwa3@10.0.0.3 down</span>
          transactions — <code>BEGIN</code> is accepted because drivers send it unasked,
          and <code>ROLLBACK</code> says nothing was rolled back. Around 140,000 prepared
          statements a second under pgbench, on one node.</p>
+      <p><code>CREATE SCHEMA analytics</code>, and <code>analytics.events</code> is the set
+         named <code>analytics.events</code>. The catalogs are modelled well enough for a GUI:
+         DBeaver's navigator lists schemas, tables and the <code>key</code> column, and its
+         table designer is told at <code>CREATE TABLE</code> that the one column is called
+         <code>key</code>, rather than finding out on the first insert.</p>
       <p>The same tables answer over the MySQL protocol, to <code>mysql</code>,
          <code>mariadb</code> and the MySQL connectors — <code>INSERT IGNORE</code>,
          prepared statements, <code>SHOW TABLES</code>, columns named the way MySQL names
@@ -867,7 +982,13 @@ member kurwa3@10.0.0.3 down</span>
       <p>And SQL Server: <code>sqlcmd</code>, ODBC and tedious connect over TLS, as they do by
          default, T-SQL's <code>IF NOT EXISTS (…) INSERT</code> is an insert with one
          winner, and stored procedures run from <code>.sql</code> files deployed with the
-         node.</p>
+         node. SQL Server Management Studio connects too, and its Object Explorer shows
+         <code>kurwadb</code> beside the system databases with every set as a table. SSMS
+         does not ask a server what it is in a few queries: it runs dozens of generated
+         batches across <code>sys.*</code> views and reads every column by type. So its answers
+         were recorded once against a real SQL Server, with their exact types, and kurwadb
+         replays them with its own databases, schemas and sets in the rows - all 60 of a
+         recorded session match.</p>
       <p>And MongoDB: a collection is a set, a document is <code>{_id: key}</code>, a second
          insert of an <code>_id</code> is <code>E11000</code> with one winner, and every node
          answers as a <code>mongos</code>, so a driver given several nodes fails over between
@@ -886,15 +1007,46 @@ member kurwa3@10.0.0.3 down</span>
   </section>
 
   <section class="row">
+    <div class="rail"><span class="eyebrow">Watch</span></div>
+    <div class="col">
+      <h2>See the requests move</h2>
+      <p>Every node serves a dashboard at <code>/dashboard</code>: each node's frontends,
+         coordinator, replica layer and shards, with requests drawn travelling between
+         them - from a client into a frontend, down to a shard, across to the other
+         replicas - and every open connection named by the application it said it was.
+         The counters behind it are one atomic add per layer per request, and the release
+         that added them was held until it was no slower than the one before.</p>
+      <p class="actions" style="margin-top:14px"><a class="btn primary" href="dashboard.html">Open the live demo</a></p>
+      <p>The demo runs on simulated data in your browser: three nodes, a dozen clients, and
+         a node that fails every couple of minutes so you can watch its clients move.</p>
+    </div>
+  </section>
+
+  <section class="row">
+    <div class="rail"><span class="eyebrow">Clients</span></div>
+    <div class="col">
+      <h2>Its own clients, for when a driver is not enough</h2>
+      <p>Any PostgreSQL, Redis or MongoDB driver works, but a generic driver talks to one
+         address. kurwadb's own clients - <a href="https://github.com/holooloo/kurwadb/tree/main/clients/js">JavaScript</a>,
+         no dependencies, and <a href="https://github.com/holooloo/kurwadb/tree/main/clients/go">Go</a>,
+         standard library only - learn every node from one, rebuild the ring bit for bit,
+         send each key to one of its replicas, and move off a node that fails.</p>
+<pre><span class="k">const</span> db = <span class="k">await</span> connect({ nodes: [<span class="c">"10.0.0.1:6379"</span>], password })
+<span class="k">await</span> db.addNew(<span class="c">"payment:7f3a"</span>)   <span class="c">// true for exactly one caller, cluster-wide</span>
+<span class="k">await</span> db.has(<span class="c">"payment:7f3a"</span>)      <span class="c">// true, from a node that holds a copy</span></pre>
+    </div>
+  </section>
+
+  <section class="row">
     <div class="rail"><span class="eyebrow">Limits</span></div>
     <div class="col">
       <h2>When not to take this</h2>
       <ul class="limits">
-        <li><b>One node, and the set fits in RAM.</b> Redis is simpler, has a decade in production and an ecosystem, ties on throughput, and uses four times less memory than the in-memory engine. Take it.</li>
+        <li><b>One node, and the set fits in RAM.</b> Redis is simpler, has a decade in production and an ecosystem, is 10–20% faster on one server, and uses four times less memory than the in-memory engine. Take it.</li>
         <li><b>False positives are acceptable and you never delete.</b> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0.</li>
         <li><b>You need scans, listings or queries.</b> There are none, by construction, and that will not change.</li>
         <li><b>You need the on-disk engine to be mature.</b> It exists and passes the same test suite, but it is younger than the in-memory one and compaction is crude.</li>
-        <li><b>Zero hours in production.</b> One author, no client libraries, no TLS between nodes.</li>
+        <li><b>Zero hours in production.</b> One author, two young client libraries, no TLS between nodes.</li>
       </ul>
     </div>
   </section>
@@ -914,7 +1066,7 @@ curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — read from a di
 
   <footer>
     <span>MIT</span>
-    <span>246 tests, plus 15 against three real nodes, on both engines</span>
+    <span>397 tests, plus 21 against three real nodes, on both engines</span>
     <span><a href="article.html">The write-up</a></span>
     <span class="polish">bóbr, kurwa</span>
     <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
@@ -1089,6 +1241,122 @@ curl -i   localhost:4041/k/order:1029   <span class="c"># 200 — read from a di
       start();
     }
   }
+})();
+</script>
+<script>
+(function () {
+  "use strict";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var SVG = "http://www.w3.org/2000/svg";
+
+  function onceVisible(el, fn, margin) {
+    if (!("IntersectionObserver" in window)) { fn(); return; }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { io.disconnect(); fn(); } });
+    }, { rootMargin: margin || "0px 0px -12% 0px" });
+    io.observe(el);
+  }
+
+  /* ------------------------------------------------------------ reveal */
+  if (!reduced) {
+    document.querySelectorAll("section.row").forEach(function (row) {
+      row.classList.add("reveal");
+      onceVisible(row, function () { row.classList.add("in"); }, "0px 0px -8% 0px");
+    });
+  }
+
+  /* -------------------------------------------------------------- bars */
+  document.querySelectorAll("[data-bars]").forEach(function (bars) {
+    if (reduced) { bars.classList.add("in"); return; }
+    onceVisible(bars, function () { bars.classList.add("in"); });
+  });
+
+  /* ------------------------------------------------------------ counts */
+  function show(n, unit) {
+    var s = Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    return s + (unit || "");
+  }
+  document.querySelectorAll("[data-count]").forEach(function (el) {
+    var target = Number(el.getAttribute("data-count"));
+    var unit = el.getAttribute("data-unit");
+    if (reduced) return;
+    el.textContent = show(0, unit);
+    onceVisible(el, function () {
+      var t0 = performance.now(), d = 1400;
+      (function step(now) {
+        var k = Math.min(1, (now - t0) / d);
+        var e = 1 - Math.pow(1 - k, 3);
+        el.textContent = show(target * e, unit);
+        if (k < 1) requestAnimationFrame(step);
+      })(t0);
+    });
+  });
+
+  /* ----------------------------------------------------------- fan-out */
+  var svg = document.getElementById("fanout");
+  if (!svg) return;
+  var layer = document.getElementById("fo-msgs");
+  var paths = { cl: document.getElementById("fo-cl"), ab: document.getElementById("fo-ab"), ac: document.getElementById("fo-ac") };
+  var allBtn = document.getElementById("fo-all"), rBtn = document.getElementById("fo-r");
+  var countEl = document.getElementById("fo-count"), rateEl = document.getElementById("fo-rate");
+  var cSub = document.getElementById("fo-c-sub");
+  var mode = "r", visible = false, timer = null;
+
+  function setMode(m) {
+    mode = m;
+    allBtn.setAttribute("aria-pressed", String(m === "all"));
+    rBtn.setAttribute("aria-pressed", String(m === "r"));
+    countEl.textContent = m === "all" ? "2" : "1";
+    rateEl.textContent = m === "all" ? "63 900" : "98 600";
+    paths.ac.classList.toggle("idle", m === "r");
+    cSub.textContent = m === "r" ? "not asked" : "replica";
+  }
+  allBtn.addEventListener("click", function () { setMode("all"); });
+  rBtn.addEventListener("click", function () { setMode("r"); });
+  setMode("r");
+
+  // a dot that travels a path, forwards or back, then calls done
+  function travel(path, cls, back, ms, done) {
+    var dot = document.createElementNS(SVG, "circle");
+    dot.setAttribute("r", "6");
+    dot.setAttribute("class", "fo-msg " + cls);
+    layer.appendChild(dot);
+    var len = path.getTotalLength(), t0 = performance.now();
+    (function step(now) {
+      var k = Math.min(1, (now - t0) / ms);
+      var e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+      var p = path.getPointAtLength((back ? 1 - e : e) * len);
+      dot.setAttribute("cx", p.x); dot.setAttribute("cy", p.y);
+      if (k < 1) requestAnimationFrame(step);
+      else { layer.removeChild(dot); if (done) done(); }
+    })(t0);
+  }
+
+  function read() {
+    var asked = mode === "all" ? [paths.ab, paths.ac] : [paths.ab];
+    travel(paths.cl, "client", false, 420, function () {
+      var left = asked.length;
+      asked.forEach(function (p) {
+        travel(p, "ask", false, 520, function () {
+          travel(p, "reply", true, 520, function () {
+            if (--left === 0) travel(paths.cl, "reply", true, 420);
+          });
+        });
+      });
+    });
+  }
+
+  function run() {
+    if (timer || reduced) return;
+    read();
+    timer = setInterval(function () { if (visible && !document.hidden) read(); }, 1100);
+  }
+
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (es) {
+      es.forEach(function (e) { visible = e.isIntersecting; if (visible) run(); });
+    }).observe(svg);
+  } else { visible = true; run(); }
 })();
 </script>
 </body>

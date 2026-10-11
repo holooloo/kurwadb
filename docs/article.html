@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>A database that stores keys and nothing else</title>
-<meta name="description" content="What falls out of one constraint, and the five bugs that only turned up when I measured.">
+<meta name="description" content="What falls out of one constraint, and the six bugs that only turned up when I measured.">
 <meta name="author" content="kurwadb">
 <meta property="og:title" content="A database that stores keys and nothing else">
-<meta property="og:description" content="What falls out of one constraint, and the five bugs that only turned up when I measured.">
+<meta property="og:description" content="What falls out of one constraint, and the six bugs that only turned up when I measured.">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://kurwadb.dev/article.html">
 <link rel="canonical" href="https://kurwadb.dev/article.html">
@@ -146,6 +146,18 @@
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
   }
+
+  /* animated comparison bars: script adds .in when they scroll into view */
+  .abars { margin: 18px 0 8px; }
+  .abars .r { display: grid; grid-template-columns: 150px minmax(0, 1fr) 110px; gap: 10px; align-items: center; padding: 4px 0; font-size: 0.86rem; }
+  .abars .t { height: 16px; background: var(--sunken); border: 2px solid var(--outline); border-radius: 999px; overflow: hidden; }
+  .abars .t i { display: block; height: 100%; width: 0; background: var(--teal); border-right: 2px solid var(--outline); border-radius: 999px; transition: width 1.3s cubic-bezier(.2,.8,.2,1); }
+  .abars .r.hot .t i { background: var(--accent); }
+  .abars .r.bad .t i { background: var(--berry); }
+  .abars.in .t i { width: var(--w); }
+  .abars .v { font-family: "IBM Plex Mono", monospace; font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  @media (max-width: 560px) { .abars .r { grid-template-columns: 96px minmax(0, 1fr) 84px; font-size: 0.8rem; } }
+  @media (prefers-reduced-motion: reduce) { .abars .t i { transition: none; } }
 </style>
 </head>
 <body>
@@ -227,12 +239,12 @@
 
   <header class="post">
     <h1>A database that stores keys and nothing else</h1>
-    <p class="dek">One constraint, followed all the way down — and the five bugs that
+    <p class="dek">One constraint, followed all the way down — and the six bugs that
        only turned up once I stopped describing the thing and started measuring it.</p>
     <div class="byline">
       <span>Elixir · BEAM</span>
-      <span>about 31 minutes</span>
-      <span>re-measured 6 October 2026</span>
+      <span>about 38 minutes</span>
+      <span>updated 11 October 2026, 0.18.0</span>
       <span><a href="https://github.com/holooloo/kurwadb">github.com/holooloo/kurwadb</a></span>
     </div>
   </header>
@@ -858,9 +870,108 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
      part on the server too: 48,000 lookups a second through tedious with encryption,
      80,000 without, against about 11 µs of everything else per request.</p>
 
+
+  <h3>And the GUIs, which want a whole server</h3>
+
+  <p>Drivers ask a few questions and then send your queries. GUIs are another animal.
+     DBeaver builds its navigator from fragments - <code>SELECT n.oid,n.*,d.description
+     FROM pg_catalog.pg_namespace n LEFT OUTER JOIN pg_catalog.pg_description d ON
+     ...</code> - and a schema here, a table there, joined and filtered as the click
+     needs. Recognising those one string at a time does not keep up, so the PostgreSQL
+     frontend got a small evaluator instead: modelled <code>pg_namespace</code>,
+     <code>pg_class</code>, <code>pg_attribute</code>, <code>pg_type</code> and friends,
+     <code>alias.*</code> expansion, joins on their <code>ON</code> equalities, a
+     <code>WHERE</code> that lets a row through unless a condition it understands says
+     no. With <code>CREATE SCHEMA</code> mapped to dotted set names, DBeaver lists
+     schemas, tables and the one column, and pgjdbc's own metadata calls agree.</p>
+
+  <p>SQL Server Management Studio is further out still. It runs SMO, which sends dozens
+     of generated batches - temporary tables filled from <code>xp_msver</code>, registry
+     reads, <code>CROSS APPLY</code>, dynamic SQL - and reads every column by type. An
+     interpreter for that is most of SQL Server. So instead of interpreting, I recorded:
+     a 150-line proxy sat between SSMS and a real SQL Server, turned encryption off in
+     PRELOGIN both ways, and wrote down every request and every reply. A decoder turned
+     the replies into templates keyed by the request's normalised text, with the exact
+     column types the server sent; kurwadb replays them, with its own databases, schemas
+     and sets in the rows that are about what it holds. A replay harness sends the
+     recorded session to kurwadb and compares every column type: 60 of 60. SMO chooses
+     its queries by version, so kurwadb now claims the recorded server's version - claim
+     another and SSMS asks questions no recording has.</p>
+
+  <h2>Bug six: the dashboard that made it slower</h2>
+
+  <p>A dashboard needs numbers, so 0.17.0 put counters on every request: its frontend,
+     the coordinator, the replica layer, the shard. The project's rule is that a release
+     slower than the one before is broken, so it was measured against 0.16.0 the same
+     day, in turns. It was broken:</p>
+
+  <div class="abars" data-abars>
+    <div class="r"><span>pgbench, 0.16.0</span><span class="t"><i style="--w:100%"></i></span><span class="v">140 300</span></div>
+    <div class="r bad"><span>pgbench, first cut</span><span class="t"><i style="--w:78%"></i></span><span class="v">110 100</span></div>
+    <div class="r"><span>cluster writes, 0.16.0</span><span class="t"><i style="--w:100%"></i></span><span class="v">65 100</span></div>
+    <div class="r bad"><span>cluster writes, first cut</span><span class="t"><i style="--w:93%"></i></span><span class="v">60 600</span></div>
+  </div>
+
+  <p>Three atomic adds do not cost 20%. What did, in order of embarrassment:</p>
+
+  <ul>
+    <li><strong>An exception per request.</strong> Counting a request against its client
+       connection did <code>:ets.update_counter</code> on a row that only registered
+       connections have, and rescued the <code>ArgumentError</code> for everyone else.
+       Every HTTP request is everyone else. 167 µs, until it asked the process dictionary
+       first.</li>
+    <li><strong>One hot row.</strong> "Replica requests sent to node B" was one ETS counter
+       that all 64 concurrent requests on a node wrote. They queued on it. Peers got slots
+       in a <code>:counters</code> array instead.</li>
+    <li><strong><code>:binary.match/2</code> with a list compiles it every call.</strong> A
+       cheap pre-check meant to spare ordinary queries a regex built an eleven-pattern
+       search automaton on every PostgreSQL query: 13 µs, against 2.2 µs for parsing the
+       whole query. That was the pgbench number.</li>
+    <li><strong>Regex literals have been recompiled on every use since OTP 28.</strong> A
+       compiled regex can no longer live in a module's literals, so <code>~r</code> on a
+       request path is 300 ns of compile before every match. The ones on request paths
+       now compile once into <code>:persistent_term</code>.</li>
+  </ul>
+
+  <p>Fixing those got back to even. Getting ahead came from somewhere else:
+     <code>Application.get_env/3</code> costs about 45 ns, and a read called it five or
+     six times - quorum sizes, timeout, engine, cache switch. Settings now live in
+     <code>:persistent_term</code>, and a membership check that took 905 ns takes 787. The
+     counters were paid for by a cost that had been there since 0.1.0 and nobody had
+     measured, which is the usual way.</p>
+
+  <h2>Asking fewer replicas</h2>
+
+  <p>The next idea was a smart client: compute the ring in the client, send each key
+     straight to a node that holds it, and the coordinator answers its own copy without a
+     hop. JavaScript and Go clients that rebuild the ring bit for bit - checked against
+     927 placements the server's own ring wrote out - took an afternoon. Then they were
+     measured, and they were not faster. Not by a microsecond, on three nodes or five.</p>
+
+  <p>The reason was in the server. A read with <code>r=2</code> asked all three replicas
+     and kept the first two answers. Landing on a replica turned three network requests
+     into two, and a quorum read waits for one remote reply either way, so the latency was
+     identical and the saved message was a third of the traffic - too little to see. But
+     the extra answers bought nothing at all: any two replicas overlap every write's two,
+     because <code>r + w &gt; n</code>. So 0.18.0 asks r - itself first when it holds a
+     copy - and the others only if those take longer than 10 ms, so a stalled replica
+     costs a read the hedge rather than the two-second timeout:</p>
+
+  <div class="abars" data-abars>
+    <div class="r"><span>asks all n</span><span class="t"><i style="--w:64.8%"></i></span><span class="v">63 900/s</span></div>
+    <div class="r hot"><span>asks r (0.18.0)</span><span class="t"><i style="--w:100%"></i></span><span class="v">98 600/s</span></div>
+  </div>
+
+  <p>Reads across three nodes under 64 clients, measured both ways on the same day:
+     <strong>+54%</strong>, one read alone 39.7 to 36.7 µs, writes unchanged because they
+     still go everywhere, as they must. And now the clients' routing means something: on
+     five nodes, reads go from 44,500 a second to 55,400 with both. The lesson is the one
+     from the ring bug, from the other side: the client was right, and measured, and
+     useless, because the cost it was saving was not the cost there was.</p>
+
   <h2 id="where-this-should-beat-what-people-use-today">Where this should beat what people use today</h2>
 
-  <p>A tie with Redis on one node is not a reason to use anything. The reasons are
+  <p>Losing to Redis by 10–20% on one node is not a reason to use anything, and neither would a tie be. The reasons are
      architectural, and each one is a consequence of storing no values rather than of
      the code being clever. Only Redis has been measured against here; the comparisons
      to other systems are about what their designs make them do, not benchmarks.</p>
@@ -901,11 +1012,11 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
   <p>So, plainly, when not to use this:</p>
 
   <ul>
-    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, is 15–20% faster one request at a time and twice as fast pipelined, and uses four times less memory than the in-memory engine. Take it.</li>
+    <li><strong>One node, and the set fits in RAM.</strong> Redis is simpler, has a decade in production and an ecosystem, is 10–20% faster one request at a time and 1.5–2× as fast pipelined, and uses four times less memory than the in-memory engine. Take it.</li>
     <li><strong>False positives are acceptable and you never delete.</strong> A Bloom filter costs 1.2 bytes per key against the on-disk engine's 3.0 — less of a gap than it used to be, but still a real one.</li>
     <li><strong>You need scans, listings or queries.</strong> There are none, deliberately, and that will not change.</li>
     <li><strong>You need the on-disk engine to be mature.</strong> It exists, and passes the same suite as the in-memory one, but it is younger and its compaction is crude.</li>
-    <li><strong>Zero hours in production.</strong> One author, no client libraries, no TLS between nodes.</li>
+    <li><strong>Zero hours in production.</strong> One author, two young client libraries, no TLS between nodes.</li>
   </ul>
 
   <h2>The actual lesson</h2>
@@ -921,11 +1032,12 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
      turns out to mount as a filesystem, set union turns out to be free, and six wire
      protocols turn out to be six thin adapters over one call.</p>
 
-  <p>And then you measure it, and discover the ring was being rebuilt on every request.</p>
+  <p>And then you measure it, and discover the ring was being rebuilt on every request -
+     and, a dozen releases later, that a read was asking a replica it never needed.</p>
 
   <div class="end">
-    <p><strong>kurwadb</strong> is MIT-licensed, 372 tests — run against both engines — plus
-       19 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
+    <p><strong>kurwadb</strong> is MIT-licensed, 397 tests — run against both engines — plus
+       21 against three real distributed nodes, and about as production-ready as that sentence implies.</p>
     <p><a href="https://github.com/holooloo/kurwadb">Source</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/docs/adr/0001-key-only-distributed-set.md">The case for the design</a> ·
        <a href="https://github.com/holooloo/kurwadb/blob/main/ARCHITECTURE.md">Architecture, including what is deliberately missing</a> ·
@@ -939,5 +1051,17 @@ Kurwa.Pg             RowDescription, DataRow, "SELECT 1" - one write to the sock
   </footer>
 
 </div>
+<script>
+(function () {
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  document.querySelectorAll("[data-abars]").forEach(function (el) {
+    if (reduced || !("IntersectionObserver" in window)) { el.classList.add("in"); return; }
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (e) { if (e.isIntersecting) { el.classList.add("in"); io.disconnect(); } });
+    }, { rootMargin: "0px 0px -15% 0px" });
+    io.observe(el);
+  });
+})();
+</script>
 </body>
 </html>
