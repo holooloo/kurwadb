@@ -62,6 +62,8 @@ if config_env() != :test do
     # Where clients reach this node from outside, when that is not its own
     # address and ports (a container's published ports): shown on the
     # dashboard. KURWA_PUBLIC_PORTS is "pg=25432,mssql=1433,...".
+    read_fanout: if(System.get_env("KURWA_READ_FANOUT") == "all", do: :all, else: :targeted),
+    read_hedge_ms: int.("KURWA_READ_HEDGE_MS", 10),
     public_host: System.get_env("KURWA_PUBLIC_HOST"),
     # The dashboard's connection help shows the password only when this is on:
     # the page itself needs no password, so anyone who can open it sees it.

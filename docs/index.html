@@ -733,16 +733,17 @@
            with four. 0.17.0 put request counters for the dashboard on every request and
            was held until it was no slower than 0.16.0 measured the same day; the Redis
            figure reads lower than 0.11.0's because that day's machine was slower, and
-           0.16.0 measured alongside it read 111k.</p>
+           0.16.0 measured alongside it read 111k. 0.18.0 reads from r replicas instead of
+           all n: half again as many reads per second across three nodes.</p>
       </div>
 
       <div class="scroll">
         <table>
-          <thead><tr><th scope="col">Operation</th><th scope="col">0.17.0</th></tr></thead>
+          <thead><tr><th scope="col">Operation</th><th scope="col">0.18.0</th></tr></thead>
           <tbody>
             <tr><td>Local membership check</td><td class="num">350 ns</td></tr>
-            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~39 µs</td></tr>
-            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">65k writes/s · 68k reads/s</td></tr>
+            <tr><td>Quorum across 3 nodes, single client</td><td class="num">~37 µs read · ~40 µs write</td></tr>
+            <tr><td>Quorum across 3 nodes, 64 clients</td><td class="num">~60k writes/s · 99k reads/s</td></tr>
             <tr><td><code>GET /k/:key</code>, keep-alive</td><td class="num">137k req/s</td></tr>
             <tr><td><code>POST /batch</code>, 100 keys per request</td><td class="num">544k keys/s</td></tr>
             <tr><td>PostgreSQL protocol, one client</td><td class="num">50 µs per query</td></tr>

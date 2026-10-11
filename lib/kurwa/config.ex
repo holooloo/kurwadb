@@ -52,6 +52,9 @@ defmodule Kurwa.Config do
     mssql_tls: nil,
     mssql_encryption: :on,
     procedures_dir: nil,
+    # reads ask r replicas, the rest only if those are slow; :all asks n
+    read_fanout: :targeted,
+    read_hedge_ms: 10,
     public_host: nil,
     dashboard_show_password: false,
     public_ports: %{},

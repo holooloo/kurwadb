@@ -179,6 +179,16 @@ defmodule Kurwa.Metrics do
 
   # ------------------------------------------------------------- reading
 
+  @doc "Replica requests sent to and received from each peer since boot: `%{{:sent | :received, peer} => n}`."
+  def peer_totals do
+    ref = :persistent_term.get({__MODULE__, :peer_counters})
+
+    for {peer, slot} <- :persistent_term.get(@peers_ref, %{}),
+        {kind, offset} <- [sent: 1, received: 2],
+        into: %{},
+        do: {{kind, peer}, :counters.get(ref, slot * 2 + offset)}
+  end
+
   @doc "This node's current picture: rates over the last second, plus history."
   def snapshot do
     GenServer.call(__MODULE__, :snapshot, 2_000)

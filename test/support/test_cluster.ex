@@ -116,6 +116,23 @@ defmodule Kurwa.TestCluster do
   @doc "`Kurwa.info/0` as that node sees it."
   def info(peer), do: call(peer, Kurwa, :info, [])
 
+  @doc """
+  Runs on a peer: its replica endpoints stop answering for `ms` and then
+  carry on. One process does both, because only the process that suspended
+  another may resume it.
+  """
+  def stall_endpoints(ms) do
+    pids = for i <- 0..15, pid = Process.whereis(:"kurwa_replica_endpoint_#{i}"), do: pid
+
+    spawn(fn ->
+      Enum.each(pids, &:erlang.suspend_process/1)
+      Process.sleep(ms)
+      Enum.each(pids, &:erlang.resume_process/1)
+    end)
+
+    :ok
+  end
+
   @doc "Live keys held locally by that node."
   def local_keys(peer), do: call(peer, Kurwa.Store, :count, [])
 

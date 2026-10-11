@@ -9,7 +9,9 @@ alias Kurwa.TestCluster, as: TC
 
 dir = "tmp/bench-cluster"
 File.rm_rf!(dir)
-[one | _] = peers = TC.start(3, dir, shards: 8)
+fanout = if System.get_env("KURWA_READ_FANOUT") == "all", do: :all, else: :targeted
+[one | _] = peers = TC.start(3, dir, shards: 8, read_fanout: fanout)
+IO.puts("read fan-out: #{fanout}")
 IO.puts("\n3 nodes, n=3 r=2 w=2\n")
 
 # The loop runs inside a node, so the peer control channel is not in the timing.

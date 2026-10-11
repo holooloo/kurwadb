@@ -288,6 +288,35 @@ single server by a clear margin.
 **Latency is level.** p50 is 0.30 ms for kurwadb and 0.28-0.32 ms for Redis
 one request at a time.
 
+## What 0.18.0 changed
+
+A read used to ask all n replicas and take the first r answers. Any r of
+them overlap every write's w (r + w > n), so asking the rest bought nothing
+but traffic: at n=3 r=2 a third of every read's messages. 0.18.0 asks r -
+this node first when it holds a copy, since it answers inline - and the
+others only if those have not answered within `read_hedge_ms` (10 ms), so a
+replica that stalls costs a read the hedge rather than the 2 s timeout.
+`KURWA_READ_FANOUT=all` puts the old behaviour back, which is how the two
+were compared: `bench/cluster.exs`, three runs of each, alternating, on
+2026-10-11.
+
+| | asks all n | asks r (0.18.0) | |
+|---|---|---|---|
+| `member?`, single client | 39.7 µs | 36.7 µs | −8% |
+| `member?`, 64 clients | 63 900 ops/sec | 98 600 ops/sec | **+54%** |
+| `add`, single client | 45.7 µs | 41.3 µs | noise |
+| `add`, 64 clients | 60 000 ops/sec | 54 700 ops/sec | noise |
+
+Writes still go to all n replicas and wait for w, as they must, so they
+move only with the noise - which that day was wide: the same configuration
+spread 54 300 – 67 900 for `add`. The read gain is outside it in every run.
+Read repair now happens only on the replicas a read asked; the others are
+caught up by anti-entropy (`Kurwa.Repair`) as before.
+
+With the clients' ring-aware routing on top - five local nodes, 64
+goroutines, `clients/go/bench/throughput` - reads go from 44 500 a second
+(all n, no routing) to 55 400 (r, routed).
+
 ## What 0.17.0 changed
 
 0.17.0 put a dashboard on every node, and a dashboard needs numbers: every

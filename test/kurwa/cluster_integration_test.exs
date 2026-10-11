@@ -251,6 +251,42 @@ defmodule Kurwa.ClusterIntegrationTest do
     TC.await(fn -> TC.call(revived_one, Kurwa.Handoff, :depth, []) == %{} end, 15_000)
   end
 
+  test "a read asks r replicas, not all n", %{peers: [one, two, three]} do
+    keys = for i <- 1..200, do: "fanout:#{i}"
+    for key <- keys, do: :ok = TC.call(one, Kurwa, :add, [key])
+
+    received = fn ->
+      for peer <- [two, three], reduce: 0 do
+        sum ->
+          sum + Map.get(TC.call(peer, Kurwa.Metrics, :peer_totals, []), {:received, one.node}, 0)
+      end
+    end
+
+    before = received.()
+    for key <- keys, do: assert(TC.call(one, Kurwa, :member?, [key]) == true)
+
+    # n=3 on three nodes: `one` holds every key and answers its own copy, so
+    # r=2 needs one remote replica per read. Asking all n would be two.
+    assert received.() - before <= 220
+  end
+
+  test "a stalled replica costs a read the hedge, not the timeout", %{peers: [one, two, _three]} do
+    keys = for i <- 1..100, do: "hedge:#{i}"
+    for key <- keys, do: :ok = TC.call(one, Kurwa, :add, [key])
+
+    # Up as far as the cluster can tell, but not answering anything.
+    :ok = TC.call(two, Kurwa.TestCluster, :stall_endpoints, [4_000])
+    Process.sleep(50)
+
+    {us, answers} =
+      :timer.tc(fn -> for key <- keys, do: TC.call(one, Kurwa, :member?, [key]) end)
+
+    assert Enum.all?(answers, &(&1 == true))
+    # Without the hedge, every read whose second replica is `two` would wait
+    # the 2 s request timeout.
+    assert us < 3_000_000
+  end
+
   test "a quorum that cannot be met is an error, not a false", %{peers: [one, two, three]} do
     :ok = TC.call(one, Kurwa, :add, ["survivor"])
 

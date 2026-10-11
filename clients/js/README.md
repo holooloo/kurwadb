@@ -58,14 +58,19 @@ connections (two by default) and a request the least busy of them.
 `db.replicas(key, set)` shows where a key lives;
 `node bench/routing.js` measures routing on against off.
 
-**What it does not buy yet.** Measured on 2026-10-09 against five local nodes
-(n=3, r=2): 86 µs a read either way, and in Go about 40 000 reads/s from 64
-goroutines either way. A quorum read waits for one remote replica whether or
-not the coordinator holds a copy, and the server sends the read to all n
-replicas, so landing on a replica saves one message in three - too little to
-see. The gain comes when the server reads from r replicas instead of all n
-and the client sends each key to one of them; routing is the client half of
-that, and is right today, but not faster.
+**What it buys.** Since 0.18.0 the server reads from r replicas, this node
+first, instead of all n, so a read that lands on a replica sends one message
+to another node instead of three. Five local nodes (n=3, r=2), 64 goroutines
+in Go (`go run ./bench/throughput` in clients/go), 2026-10-11, medians:
+
+| | routing off | routing on |
+|---|---|---|
+| server reads all n (`KURWA_READ_FANOUT=all`) | 44 500 reads/s | 48 000 reads/s |
+| server reads r (the default) | 50 600 reads/s | 55 400 reads/s |
+
+One read's latency does not change - a quorum read waits for one remote
+replica either way - so this is throughput: less traffic between nodes, and
+less CPU spent on it.
 
 **Failover.** A connection that fails marks its node down; its in-flight
 requests fail with `code: "CONNECTION"`. Reads and `add` are retried once on

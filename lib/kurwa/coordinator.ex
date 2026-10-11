@@ -160,7 +160,7 @@ defmodule Kurwa.Coordinator do
       targets = placement.up
       r = quorum_size(Keyword.get(opts, :r, Config.r()), targets)
 
-      outcome = Quorum.request(targets, {:get, key}, r, timeout)
+      outcome = read(targets, {:get, key}, r, timeout)
 
       if length(outcome.ok) >= r do
         winner = outcome.ok |> Enum.map(fn {_node, record} -> record end) |> Record.merge_all()
@@ -270,6 +270,40 @@ defmodule Kurwa.Coordinator do
         raise ArgumentError,
               "ttl must be a positive number of milliseconds, got #{inspect(other)}"
     end
+  end
+
+  # A read asks r replicas, not all n: any r of them overlap every write's w
+  # (r + w > n), so the answer is the same, for a third of the traffic at
+  # n=3 r=2. This node goes first when it holds a copy - it answers inline -
+  # then the preference order. If those r have not all answered within
+  # `read_hedge_ms`, the rest are asked too, so a slow or dying replica costs
+  # a few milliseconds rather than the whole timeout. `read_fanout: :all`
+  # asks every replica at once, as before 0.18.
+  defp read(targets, request, r, timeout) do
+    {first, rest} = targets |> local_first() |> Enum.split(r)
+
+    if Config.get(:read_fanout) == :all or rest == [] do
+      Quorum.request(targets, request, r, timeout)
+    else
+      hedge = min(Config.get(:read_hedge_ms), timeout)
+      started = System.monotonic_time(:millisecond)
+      outcome = Quorum.request(first, request, r, hedge)
+
+      if length(outcome.ok) >= r do
+        outcome
+      else
+        left = max(timeout - (System.monotonic_time(:millisecond) - started), 1)
+        answered = Enum.map(outcome.ok, &elem(&1, 0))
+        again = (rest ++ first) -- answered
+        more = Quorum.request(again, request, r - length(outcome.ok), left)
+        %{ok: outcome.ok ++ more.ok, failed: more.failed}
+      end
+    end
+  end
+
+  defp local_first(targets) do
+    me = node()
+    if me in targets, do: [me | List.delete(targets, me)], else: targets
   end
 
   defp placement(key, opts) do

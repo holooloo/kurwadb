@@ -384,6 +384,8 @@ variables are read at boot (`config/runtime.exs`).
 |---|---|---|---|
 | `n` `r` `w` | `KURWA_N` `KURWA_R` `KURWA_W` | 3, 2, 2 | replicas, read quorum, write quorum |
 | `strict_quorum` | `KURWA_STRICT_QUORUM` | `false` | fail instead of lowering the quorum to the replicas that exist |
+| `read_fanout` | `KURWA_READ_FANOUT` | `:targeted` | a read asks r replicas, this node first; `all` asks every replica, as before 0.18 |
+| `read_hedge_ms` | `KURWA_READ_HEDGE_MS` | 10 | how long a targeted read waits for its r replicas before asking the rest |
 | `vnodes` | `KURWA_VNODES` | 128 | ring points per node |
 | `shards` | `KURWA_SHARDS` | 8 | local ETS tables, for write concurrency |
 | `data_dir` | `KURWA_DATA_DIR` | `data` | WAL and snapshots, scoped per node |
@@ -483,9 +485,10 @@ kurwadb speaks the PostgreSQL, MySQL, SQL Server, MongoDB and Redis wire
 protocols, so their drivers work. Its own clients add what a generic driver
 cannot: they learn every node from one (`KURWA.NODES` over RESP), rebuild the
 ring (`KURWA.RING`) to send each key straight to one of its replicas, and
-move off a node that fails. Measured, routing is not yet faster - the server
-still sends a read to all n replicas, so landing on one saves one message in
-three; the clients' READMEs have the numbers. `clients/ring_fixture.json`, written by the server's own ring,
+move off a node that fails. Since the server reads from r replicas rather
+than all n (0.18.0), landing on a replica is what makes a read local: about a
+quarter more reads per second on five nodes, with the numbers in the clients'
+READMEs. `clients/ring_fixture.json`, written by the server's own ring,
 is what both test their placement against.
 
 - [Node.js](clients/js/README.md) - `clients/js`, no dependencies
